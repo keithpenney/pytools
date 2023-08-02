@@ -97,7 +97,7 @@ def makeTemplate(filename):
     sl = (
         "`timescale 1ns/1ns",
         "",
-        f"module name_tb;",
+        f"module {name}_tb;",
         "",
         # Clock
         f"reg {clkname}=1'b0;",
