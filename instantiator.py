@@ -95,6 +95,8 @@ def makeTemplate(filename):
                 clkname = portname
                 break
     sl = (
+        "`timescale 1ns/1ns",
+        "",
         f"module name_tb;",
         "",
         # Clock
