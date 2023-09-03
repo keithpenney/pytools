@@ -47,10 +47,19 @@ class VParser():
                 l.append(f"{sindent}{key} : {val}")
         return l
 
-
-    def strToDepth(self, depth=0):
+    def strToDepth(self, depth=0, partSelect = None):
+        _d = self._dict
+        if partSelect is not None:
+            parts = partSelect.split('.')
+            for nselect in range(len(parts)):
+                select = parts[nselect]
+                for key, val in _d.items():
+                    if key == select:
+                        _d = val
+        if not isinstance(_d, dict):
+            _d = self._dict
         l = ["VParser({})".format(os.path.split(self._filename)[-1])]
-        l.extend(self._strToDepth(self._dict, depth, indent=2))
+        l.extend(self._strToDepth(_d, depth, indent=2))
         return '\n'.join(l)
 
     def __str__(self):
@@ -108,10 +117,10 @@ def makeTemplate(filename):
         "reg [32*8-1:0] dumpfile; // 32-chars max",
         "initial begin",
         "  if (! $value$plusargs(\"df=%s\", dumpfile)) begin",
-"           $display(\"No dumpfile name supplied; Wave data will not be saved.\");",
+        "    $display(\"No dumpfile name supplied; Wave data will not be saved.\");",
         "  end else begin",
         "    $dumpfile(dumpfile);",
-"           $dumpvars;",
+        "    $dumpvars;",
         "  end",
         "end",
         "",
@@ -218,6 +227,28 @@ def doInstantiate(argv):
         return 0
     else:
         return 1
+
+def doBrowse(argv):
+    USAGE = f"python3 {argv[0]} filename.v [depth]"
+    if len(argv) > 1:
+        filename = argv[1]
+    else:
+        print(USAGE)
+        return False
+    depth = 4
+    partSelect = None
+    for arg in argv[2:]:
+        try:
+            arg = int(arg)
+            depth = arg
+        except:
+            partSelect = arg
+    vp = VParser(filename)
+    if not vp.valid:
+        return False
+    print(vp.strToDepth(depth, partSelect))
+    return True
+
 
 if __name__ == "__main__":
     import sys
