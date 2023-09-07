@@ -9,6 +9,9 @@
 #   2. Keep track of context with respect to multi-line comments
 #   3. Remove comments and store along with line start, stop
 
+# TODO
+#   Parsing debounce.v misses the last port and last parameter. FIXME!
+
 import os
 import re
 
@@ -45,8 +48,8 @@ class VParser():
 
     # Helper values
     LINETYPE_PARAM = 0
-    LINETYPE_PORT  = 1
-    LINETYPE_MACRO = 2
+    LINETYPE_PORT  = 0
+    LINETYPE_MACRO = 1
 
     def __init__(self, filename = ""):
         self.filename = filename
@@ -93,6 +96,23 @@ class VParser():
         #printSummary()
         self.valid = True
         return
+
+    def getPorts(self):
+        """Return list of (linetype, name, dirstr, rangeStart, rangeEnd), one for
+        each port in the parsed module. If linetype is 1 (self.LINETYPE_MACRO), the
+        'name' is actually a string of an entire macro line ('dirstr', 'rangeStart'
+        and 'rangeEnd' are all None in this case).  If linetype is 0 (self.LINETYPE_PORT),
+        it is a normal port where 'rangeStart' and 'rangeEnd' can be None, indicating
+        a single-bit signal."""
+        return self.ports
+
+    def getParams(self):
+        """Return list of (linetype, name, rspec, val), one for each parameter in the
+        parsed module. If linetype is 1 (self.LINETYPE_MACRO), the 'name' is actually a
+        string of an entire macro line ('rspec', 'val' are both None in this case).
+        If linetype is 0 (self.LINETYPE_PARAM), it is a normal parameter where 'rspec'
+        can be None, indicating a parameter with no bit range specified."""
+        return self.params
 
     def printSummary(self):
         print(f"MODULE {self.modname}")
@@ -957,7 +977,7 @@ def makeWires(ports, params=[], skip=[]):
     return '\n'.join(l)
 
 def makeInstantiator(name, ports, params=[]):
-    if len(params) > 0:
+    if params is not None and len(params) > 0:
         p = ["#("]
         for param in params:
             linetype, pname, rspec, val = param
@@ -996,8 +1016,8 @@ def instantiate(filename):
         return False
     #print(vp.strToDepth(3))
     if vp._parsedModDecl:
-        print(makeWires(vp.ports, vp.params))
-        print(makeInstantiator(vp.modname, vp.ports, vp.params))
+        print(makeWires(vp.getPorts(), vp.getParams()))
+        print(makeInstantiator(vp.modname, vp.getPorts(), vp.getParams()))
     return True
 
 def makeTemplate(filename):
@@ -1005,8 +1025,8 @@ def makeTemplate(filename):
     if not vp.valid:
         return False
     name = vp.modname
-    ports = vp.ports
-    params = vp.params
+    ports = vp.getPorts()
+    params = vp.getParams()
     # find clkname
     clkname = 'clk'
     #for portname,vdict in ports.items():

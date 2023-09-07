@@ -1,17 +1,18 @@
 #!usr/bin/python3
 
-# Generate an expression for multiplying or dividing by a constant integer
-# using only addition and bit-shift operations.
+# Generate an expression for multiplying or dividing by a constant using only
+# addition and bit-shift operations.  For floats, we first find the nearest
+# integer ratio via a Stern-Brocot tree walk.
 # Configurable overhead bits for division allow for trading register depth
 # for accuracy
+
+# TODO:
+#   How do I properly limit the number of bits available?  Specifically, the
+#   Stern-Brocot walk doesn't have an upper limit to integers.
 
 import argparse
 import math
 import re
-
-# TODO
-#   To support floats, need to find the closest integral ratio representing the number
-#   I.e. convert a rational number to a ratio
 
 def _int(x):
     try:
@@ -23,44 +24,110 @@ def _int(x):
     except ValueError:
         return None
 
-def divExpr(sarg, d, oBits):
-    """Return the logical expression for dividing by divisor 'd' (integer)
-    using 'oBits' (integer) overhead bits."""
-    # Detect powers of two
-    if (math.log2(d) % 1) == 0:
-        # d is power of two
-        return "{} >> {}".format(sarg, int(math.log2(d)))
-    n = round((1 << oBits)/d)
-    me = mulExpr(sarg, n)
-    return "({}) >> {}".format(me, oBits)
+def _sfloat(f, precision=4):
+    fmt = "{:."+str(precision)+"f}"
+    s = fmt.format(f)
+    # Trim any trailing zeros
+    s = s.rstrip('0')
+    # If f is integer, we'll end up with an awkward decimal point on the right side
+    s = s.rstrip('.')
+    return s
 
-def mulExpr(sarg, d):
-    """Return a string containing the logical expression of multiplying
-    string 'sarg' by an integer 'd' using only addition and bit-shift
-    operations."""
-    d = int(d)
-    nbits = _getNBits(d)
-    l = []
+def floatToRatio(f, nIters = 32):
+    """Implements the Stern-Brocot tree walk copied from Larry Doolittle's 'stern.c'
+    Returns (numerator, denominator) whose ratio is a close (or exact) approximation
+    to float 'f'."""
+    left  = [0, 1]  # numerator, denominator
+    right = [1, 0]
+    new = [0, 0]
+    f = abs(f)
+    minErr = 1.0
+    best = [1, 1]
+    for n in range(nIters):
+        new[0] = left[0] + right[0]
+        new[1] = left[1] + right[1]
+        v = new[0]/new[1]
+        err = abs((f-v)/f)
+        if f > v:
+            #print("target > {:.03f} = {} / {}, err = {:.05f} %".format(v, new[0], new[1], err))
+            left[0] = new[0]
+            left[1] = new[1]
+        else:
+            #print("target <= {:.03f} = {} / {}, err = {:.05f} %".format(v, new[0], new[1], err))
+            right[0] = new[0]
+            right[1] = new[1]
+        if err < minErr:
+            minErr = err
+            best = [new[0], new[1]]
+        if err == 0:
+            break
+    return best
+
+def mulInt(sarg, target, oBits):
+    target = int(target)
+    return _mulDivExpr(sarg, target, 1, target, oBits)
+
+def divInt(sarg, target, oBits):
+    target = int(target)
+    return _mulDivExpr(sarg, 1, target, 1/target, oBits)
+
+def mulFloat(sarg, target, oBits):
+    num, den = floatToRatio(target)
+    return _mulDivExpr(sarg, num, den, target, oBits)
+
+def divFloat(sarg, target, oBits):
+    # Just multiply by the inverse
+    return mulFloat(sarg, 1/target, oBits)
+
+def _mulDivExpr(sarg, num, den, target, oBits):
+    err = None
+    bestpwr = 0
+    # Scale to make the denominator a power of 2 while keeping
+    # the numerator an integer. Find the closest approximating
+    # ratio
+    if den > 1:
+        for alpha in range(oBits):
+            A = (2**alpha)/den
+            beta = int(num*A) # int((x(*2**alpha)/den))
+            thistgt = beta/(2**alpha)
+            thiserr = abs(1 - thistgt/target)
+            #print(f"{beta}//2**{alpha} = {thistgt}")
+            if err is None:
+                #print(f"{alpha}: err None -> {thiserr}")
+                err = thiserr
+                bestpwr = alpha
+            elif thiserr < err:
+                #print(f"{alpha}: err {err} -> {thiserr}")
+                err = thiserr
+                bestpwr = alpha
+        num = int(num*(2**bestpwr)/den)
+        # Now multiply by new numerator
+        den = 2**bestpwr
+    nbits = _getNBits(num)
+    expr = _mkExpr(sarg, num, bestpwr, nbits)
+    err = 100*_floatError(target, num, den)
+    return (expr, err, num, den)
+
+def _mkExpr(sarg, num, rshift, nbits):
+    expr = []
     for n in range(nbits):
-        if d & (1 << n):
+        if num & (1 << n):
             if n == 0:
-                l.append(sarg)
+                expr.append(f"{sarg}")
             else:
-                l.append("({} << {})".format(sarg, n))
-    return " + ".join(l)
+                expr.append(f"({sarg} << {n})")
+    expr = " + ".join(expr)
+    if rshift > 0:
+        return f"({expr}) >> {rshift}"
+    else:
+        return f"{expr}"
 
 def _getNBits(n):
     """Return the number of bits required to store integer 'n'"""
     return int(math.ceil(math.log2(n + 1)))
 
-def _getError(d, oBits):
-    """Return the error associated with dividing by integer 'd' using 'oBits'
-    overhead bits."""
-    d = int(d)
-    oBits = int(oBits)
-    n = round((1 << oBits)/d)
-    nexact = (1 << oBits)/d
-    return 1 - (n/nexact)
+def _floatError(operand, m, d):
+    return 1-((m/d)/operand)
 
 def printExpr(argv):
     USAGE = "python3 {} (*/)operand".format(argv[0])
@@ -76,32 +143,41 @@ def printExpr(argv):
         if sarg is None or len(sarg) == 0:
             sarg ='x'
         if '.' in operand:
+            opint = False
             operand = float(operand)
-            twostage = True
-            print("Floats not yet supported. Aborting")
-            return False
         else:
-            twostage = False
+            opint = True
             operand = _int(operand)
     else:
-        print("Invalid argument: {argstr}")
+        print(f"Invalid argument: {argstr}")
         return False
     op = operation.strip().lower()
     if op in ('*', 'x'):
         multNdiv = True
     elif op in ('/', '//'):
         multNdiv = False
+        if operand == 0:
+            print("Stop trying to divide by zero!")
+            return False
     if args.overhead_bits is None:
-        nbits = math.ceil(math.log2(operand)+1)
+        obits = math.ceil(math.log2(operand)+1)
     else:
-        nbits = int(args.overhead_bits)
+        obits = int(args.overhead_bits)
     if multNdiv:
-        expr = mulExpr(sarg, operand)
-        print("{}*{} is {}".format(sarg, operand, expr))
-    else:
-        expr = divExpr(sarg, operand, nbits)
-        err = 100*_getError(operand, nbits)
-        print("{}/{} is approximately ({:.2f}% error):".format(sarg, operand, err))
+        if opint:
+            expr, err, num, den = mulInt(sarg, operand, 0) # oBits ignored for integer multiplication
+            print(f"{sarg}*{operand} is:")
+            print(expr)
+        else:
+            expr, err, num, den = mulFloat(sarg, operand, obits)
+            print(f"{sarg}*{operand} is approximately {sarg}*{num}/{den} = {sarg}*{_sfloat(num/den, 5)} ({_sfloat(err, 5)}% error):")
+            print(expr)
+    else: # Division
+        if opint:
+            expr, err, num, den = divInt(sarg, operand, obits)
+        else:
+            expr, err, num, den = divFloat(sarg, operand, obits)
+        print(f"{sarg}/{operand} is approximately {sarg}*{num}/{den} = {sarg}/{_sfloat(den/num, 5)} ({_sfloat(err, 5)}% error):")
         print(expr)
     return True
 

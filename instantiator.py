@@ -14,6 +14,11 @@ from collections import OrderedDict
 reClk = "[Cc][Ll][Kk]$"
 
 class VParser():
+    # Helper values
+    LINETYPE_PARAM = 0
+    LINETYPE_PORT  = 0
+    LINETYPE_MACRO = 1
+
     def __init__(self, filename):
         self._filename = filename
         self.valid = self.parse()
@@ -30,7 +35,42 @@ class VParser():
             print(e)
             return False
         self._dict = json.loads(jsfile)
+        # Separate attributes for this module
+        mod = self._dict.get("modules", None)
+        if mod is not None:
+            # Get first (should be only) module
+            name,mdict = [x for x in mod.items()][0]
+            self.modname = name
+            self.ports = mdict.get('ports', None)
+        else:
+            self.modname = None
+            self.ports = []
         return True
+
+    def getPorts(self):
+        """Return list of (0, name, dirstr, rangeStart, rangeEnd), one for
+        each port in the parsed module. The first '0' in the list is for compatibility
+        with the non-Yosys parser which captures inline macros as well.  These need to
+        be inserted at the proper location so they are included in the ports list (with
+        non-zero as the first entry).  The Yosys parser acts on the preprocessed source
+        so all macros are already resolved."""
+        ports = []
+        for portname,vdict in self.ports.items():
+            portdir = vdict.get('direction', 'unknown')
+            pbits = vdict.get('bits', [0])
+            pw = len(pbits)
+            if len(pbits) > 1:
+                rangeStart = len(pbits)-1
+                rangeEnd = 0
+            else:
+                rangeStart = None
+                rangeEnd = None
+            ports.append((self.LINETYPE_PORT, portname, portdir, rangeStart, rangeEnd))
+        return ports
+
+    def getParams(self):
+        """Yosys parser does not preserve parameters - seems to resolve them to literals."""
+        return None
 
     def getDict(self):
         return self._dict
@@ -152,8 +192,78 @@ def _decomma(s):
     else:
         return s
 
-
 def makeTemplate(filename):
+    vp = VParser(filename)
+    if not vp.valid:
+        return False
+    name = vp.modname
+    ports = vp.getPorts()
+    params = vp.getParams()
+    # find clkname
+    clkname = 'clk'
+    #for portname,vdict in ports.items():
+    for port in ports:
+        linetype, name, pdir, rangeStart, rangeEnd = port
+        pdir = vdict.get('direction')
+        if rangeStart is None or rangeEnd is None:
+            # pw = 1
+            if pdir == 'input':
+                if re.match(reClk, 'clk'):
+                    clkname = portname
+                    break
+    sl = (
+        "`timescale 1ns/1ns",
+        "",
+        f"module {name}_tb;",
+        "",
+        # Clock
+        f"reg {clkname}=1'b0;",
+        f"always #5 {clkname} <= ~{clkname};",
+        "",
+        # Dumpfile
+        "// VCD dump file for gtkwave",
+        "reg [32*8-1:0] dumpfile; // 32-chars max",
+        "initial begin",
+        "  if (! $value$plusargs(\"df=%s\", dumpfile)) begin",
+        "    $display(\"No dumpfile name supplied; Wave data will not be saved.\");",
+        "  end else begin",
+        "    $dumpfile(dumpfile);",
+        "    $dumpvars;",
+        "  end",
+        "end",
+        "",
+        # Timeout
+        ""
+        "localparam TOW = 12;",
+        "localparam TOSET = {TOW{1'b1}};",
+        "reg [TOW-1:0] timeout=0;",
+        f"always @(posedge {clkname}) begin",
+        "  if (timeout > 0) timeout <= timeout - 1;",
+        "end",
+        "wire to = ~(|timeout);",
+        ""
+    )
+    for s in sl:
+        print(s)
+    if ports is not None:
+            print(makeWires(ports, params, skip=[clkname]))
+            print(makeInstantiator(name, ports, params))
+    sl = (
+        "",
+        "// =========== Stimulus =============",
+        "initial begin",
+        "  $display(\"Done\");",
+        "  $finish(0);",
+        "end",
+        "",
+        "endmodule"
+    )
+    for s in sl:
+        print(s)
+    return
+
+
+def makeTemplateOld(filename):
     vp = VParser(filename)
     if not vp.valid:
         return False
@@ -211,8 +321,8 @@ def makeTemplate(filename):
     for s in sl:
         print(s)
     if ports is not None:
-            print(makeWires(ports, skip=[clkname]))
-            print(makeInstantiator(name, ports))
+        print(makeWires(ports, skip=[clkname]))
+        print(makeInstantiator(name, ports))
     sl = (
         "",
         "// =========== Stimulus =============",
@@ -227,8 +337,33 @@ def makeTemplate(filename):
         print(s)
     return
 
+def makeWires(ports, params=[], skip=[]):
+    l = []
+    for param in params:
+        linetype, name, rspec, val = param
+        if linetype == VParser.LINETYPE_MACRO:
+            #print(f"  Macro: {name}")
+            l.append(f"{name}")
+        else:
+            #print(f"  parameter {name} = {val}")
+            l.append(f"localparam {name} = {val};")
+    #for portname,vdict in ports.items():
+    for port in ports:
+        linetype, portname, pdir, rangeStart, rangeEnd = port
+        if portname in skip:
+            continue
+        if pdir == 'input':
+            ptype = 'reg'
+        else:
+            ptype = 'wire'
+        if rangeStart is not None and rangeEnd is not None:
+            sel = f" [{rangeStart}:{rangeEnd}]"
+        else:
+            sel = ''
+        l.append(f'{ptype}{sel} {portname};')
+    return '\n'.join(l)
 
-def makeWires(ports, params=None, skip=[]):
+def makeWiresOld(ports, params=None, skip=[]):
     # TODO - Get/handle parameters
     l = []
     for portname,vdict in ports.items():
@@ -248,7 +383,7 @@ def makeWires(ports, params=None, skip=[]):
         l.append(f'{ptype}{sel} {portname};')
     return '\n'.join(l)
 
-def makeInstantiator(name, ports, params=None):
+def makeInstantiatorOld(name, ports, params=None):
     # TODO - Get/handle parameters
     l = [f'{name} {name}_i (\n']
     for portname,vdict in ports.items():
@@ -265,20 +400,52 @@ def makeInstantiator(name, ports, params=None):
     l.append(');')
     return ''.join(l)
 
+def makeInstantiator(name, ports, params=[]):
+    if params is not None and len(params) > 0:
+        p = ["#("]
+        for param in params:
+            linetype, pname, rspec, val = param
+            if linetype == VParser.LINETYPE_MACRO:
+                #print(f"  Macro: {name}")
+                p.append(f"{pname}")
+            else:
+                #print(f"  parameter {name} = {val}")
+                p.append(f"  .{pname}({pname}),")
+        # Hack. Remove the comma from the last entry
+        p[-1] = _decomma(p[-1])
+        p.append(")")
+        pstr = " " + '\n'.join(p) + " "
+    else:
+        pstr = " "
+    l = [f'{name}{pstr}{name}_i (\n']
+    #for portname,vdict in ports.items():
+    for port in ports:
+        linetype, pname, pdir, rangeStart, rangeEnd = port
+        if linetype == VParser.LINETYPE_MACRO:
+            l.append('{}\n'.format(pname))
+        else:
+            if rangeStart is not None and rangeEnd is not None:
+                pw = f" [{rangeStart}:{rangeEnd}]"
+            else:
+                pw = ''
+            l.append('  .{0}({0}), // {1}{2}\n'.format(pname, pdir, pw))
+    # Hack. Remove the comma from the last entry
+    l[-1] = _decomma(l[-1])
+    l.append(');')
+    return ''.join(l)
+
+
 def instantiate(filename):
     vp = VParser(filename)
     if not vp.valid:
         return False
     #print(vp.strToDepth(3))
     d = vp.getDict()
-    mod = d.get("modules", None)
-    if mod is not None:
-        # Get first (should be only) module
-        name,mdict = [x for x in mod.items()][0]
-        ports = mdict.get('ports', None)
-        if ports is not None:
-            print(makeWires(ports))
-            print(makeInstantiator(name, ports))
+    name = vp.modname
+    ports = vp.getPorts()
+    if ports is not None:
+        print(makeWires(ports))
+        print(makeInstantiator(name, ports))
     return True
 
 def doTestbench(argv):
