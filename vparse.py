@@ -952,6 +952,8 @@ def _decomma(s):
 
 def makeWires(ports, params=[], skip=[]):
     l = []
+    if params is None:
+        params = []
     for param in params:
         linetype, name, rspec, val = param
         if linetype == VParser.LINETYPE_MACRO:
@@ -1031,8 +1033,7 @@ def makeTemplate(filename):
     clkname = 'clk'
     #for portname,vdict in ports.items():
     for port in ports:
-        linetype, name, pdir, rangeStart, rangeEnd = port
-        pdir = vdict.get('direction')
+        linetype, portname, pdir, rangeStart, rangeEnd = port
         if rangeStart is None or rangeEnd is None:
             # pw = 1
             if pdir == 'input':

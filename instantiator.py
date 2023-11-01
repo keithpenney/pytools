@@ -203,6 +203,75 @@ def makeTemplate(filename):
     clkname = 'clk'
     #for portname,vdict in ports.items():
     for port in ports:
+        linetype, portname, pdir, rangeStart, rangeEnd = port
+        if rangeStart is None or rangeEnd is None:
+            # pw = 1
+            if pdir == 'input':
+                if re.match(reClk, 'clk'):
+                    clkname = portname
+                    break
+    sl = (
+        "`timescale 1ns/1ns",
+        "",
+        f"module {name}_tb;",
+        "",
+        # Clock
+        f"reg {clkname}=1'b0;",
+        f"always #5 {clkname} <= ~{clkname};",
+        "",
+        # Dumpfile
+        "// VCD dump file for gtkwave",
+        "reg [32*8-1:0] dumpfile; // 32-chars max",
+        "initial begin",
+        "  if (! $value$plusargs(\"df=%s\", dumpfile)) begin",
+        "    $display(\"No dumpfile name supplied; Wave data will not be saved.\");",
+        "  end else begin",
+        "    $dumpfile(dumpfile);",
+        "    $dumpvars;",
+        "  end",
+        "end",
+        "",
+        # Timeout
+        ""
+        "localparam TOW = 12;",
+        "localparam TOSET = {TOW{1'b1}};",
+        "reg [TOW-1:0] timeout=0;",
+        f"always @(posedge {clkname}) begin",
+        "  if (timeout > 0) timeout <= timeout - 1;",
+        "end",
+        "wire to = ~(|timeout);",
+        ""
+    )
+    for s in sl:
+        print(s)
+    if ports is not None:
+            print(makeWires(ports, params, skip=[clkname]))
+            print(makeInstantiator(name, ports, params))
+    sl = (
+        "",
+        "// =========== Stimulus =============",
+        "initial begin",
+        "  $display(\"Done\");",
+        "  $finish(0);",
+        "end",
+        "",
+        "endmodule"
+    )
+    for s in sl:
+        print(s)
+    return
+
+def makeTemplateOld(filename):
+    vp = VParser(filename)
+    if not vp.valid:
+        return False
+    name = vp.modname
+    ports = vp.getPorts()
+    params = vp.getParams()
+    # find clkname
+    clkname = 'clk'
+    #for portname,vdict in ports.items():
+    for port in ports:
         linetype, name, pdir, rangeStart, rangeEnd = port
         pdir = vdict.get('direction')
         if rangeStart is None or rangeEnd is None:
@@ -263,82 +332,10 @@ def makeTemplate(filename):
     return
 
 
-def makeTemplateOld(filename):
-    vp = VParser(filename)
-    if not vp.valid:
-        return False
-    #print(vp.strToDepth(3))
-    d = vp.getDict()
-    mod = d.get("modules", None)
-    if mod is None:
-        print("// no modules")
-        return
-    # Get first (should be only) module
-    name,mdict = [x for x in mod.items()][0]
-    ports = mdict.get('ports', None)
-    # find clkname
-    clkname = 'clk'
-    for portname,vdict in ports.items():
-        pdir = vdict.get('direction')
-        pbits = vdict.get('bits')
-        pw = len(pbits)
-        if pdir == 'input' and pw == 1:
-            if re.match(reClk, 'clk'):
-                clkname = portname
-                break
-    sl = (
-        "`timescale 1ns/1ns",
-        "",
-        f"module {name}_tb;",
-        "",
-        # Clock
-        f"reg {clkname}=1'b0;",
-        f"always #5 {clkname} <= ~{clkname};",
-        "",
-        # Dumpfile
-        "// VCD dump file for gtkwave",
-        "reg [32*8-1:0] dumpfile; // 32-chars max",
-        "initial begin",
-        "  if (! $value$plusargs(\"df=%s\", dumpfile)) begin",
-        "    $display(\"No dumpfile name supplied; Wave data will not be saved.\");",
-        "  end else begin",
-        "    $dumpfile(dumpfile);",
-        "    $dumpvars;",
-        "  end",
-        "end",
-        "",
-        # Timeout
-        ""
-        "localparam TOW = 12;",
-        "localparam TOSET = {TOW{1'b1}};",
-        "reg [TOW-1:0] timeout=0;",
-        f"always @(posedge {clkname}) begin",
-        "  if (timeout > 0) timeout <= timeout - 1;",
-        "end",
-        "wire to = ~(|timeout);",
-        ""
-    )
-    for s in sl:
-        print(s)
-    if ports is not None:
-        print(makeWires(ports, skip=[clkname]))
-        print(makeInstantiator(name, ports))
-    sl = (
-        "",
-        "// =========== Stimulus =============",
-        "initial begin",
-        "  $display(\"Done\");",
-        "  $finish(0);",
-        "end",
-        "",
-        "endmodule"
-    )
-    for s in sl:
-        print(s)
-    return
-
 def makeWires(ports, params=[], skip=[]):
     l = []
+    if params is None:
+        params = []
     for param in params:
         linetype, name, rspec, val = param
         if linetype == VParser.LINETYPE_MACRO:
