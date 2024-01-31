@@ -3,6 +3,7 @@
 # Handy string handling using SI-prefixes
 
 import re
+import repl
 
 _si = ((30, ("Q", "quetta")),
       (27, ("R", "ronna")),
@@ -26,6 +27,8 @@ _si = ((30, ("Q", "quetta")),
      (-27, ("r", "ronto")),
      (-30, ("q", "quecto")))
 
+_sichars = "".join([x[1][0] for x in _si])
+si_res = "^([\-0-9.]+)\s*([" + _sichars + "]?)"
 
 class SIFloat():
     def __init__(self, v):
@@ -199,9 +202,7 @@ def to_si(n, sigfigs=4, long=False, space=False):
 
 def from_si(s):
     """Interpret the number represented in string 's' using SI-prefixes"""
-    _sichars = "".join([x[1][0] for x in _si])
-    res = "^([\-0-9.]+)\s*([" + _sichars + "]?)"
-    _match = re.match(res, s.strip())
+    _match = re.match(si_res, s.strip())
     if _match:
         num, pfx = _match.groups()
         exp = _get_exp(pfx)
@@ -234,14 +235,7 @@ def testSIFloat():
     print(f"ceil({x}) = {math.ceil(x)}")
     return
 
-if __name__ == "__main__":
-    import sys
-    testSIFloat()
-    sys.exit()
-
-
-# Pre-empted above
-if __name__ == "__main__":
+def self_test():
     import bist
     def test_to_si():
         target = bist.Target(to_si)
@@ -273,3 +267,22 @@ if __name__ == "__main__":
     test_to_si()
     test_from_si()
     bist.run()
+
+def preprocess(line):
+    """Replace any strings matching the SI-prefix literal pattern with a class instantiation."""
+    # TODO
+    # 1. Break up string by quote chars
+    # 2. If not inside quotes AND preceding char is not [A-Za-z_] and following char is not [A-Za-z_]
+    # 3. Replace matching_string with SIFloat("matching_string")
+    res = "\W+" + si_res + "\W+"
+    return line
+
+def sishell():
+    intro = "SI Shell: Standard Python REPL which uses SI-prefixes for numeric literals"
+    print(intro)
+    repl.preprocess = preprocess
+    repl.repl()
+
+if __name__ == "__main__":
+    sishell()
+
