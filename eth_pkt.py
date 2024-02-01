@@ -18,7 +18,7 @@ OFFSET_ARP_SPA      = 28
 OFFSET_ARP_THA      = 32
 OFFSET_ARP_TPA      = 38
 
-# == IP ==
+# == IPv4 ==
 OFFSET_IP_VERSION_IHL = 14
 OFFSET_IP_DSCP_ECN  = 15
 OFFSET_IP_TOTAL_LENGTH = 16
@@ -29,6 +29,15 @@ OFFSET_IP_PROTOCOL  = 23
 OFFSET_IP_CHECKSUM  = 24
 OFFSET_IP_SRC_IP    = 26
 OFFSET_IP_DEST_IP   = 30
+
+# == IPv6 ==
+OFFSET_IPV6_VERSION_TC_FLOWLABEL = 14
+OFFSET_IPV6_PAYLOAD_LENGTH = 18
+OFFSET_IPV6_NEXT_HEADER = 20
+OFFSET_IPV6_HOP_LIMIT = 21
+OFFSET_IPV6_SRC_IP    = 22
+OFFSET_IPV6_DEST_IP   = 38
+OFFSET_IPV6_PAYLOAD   = 54
 
 # == ICMP ==
 PAYLOAD_OFFSET_ICMP_TYPE = 0
@@ -73,6 +82,20 @@ IP_PROTOCOL_PIM   = 103
 IP_PROTOCOL_L2TP  = 115
 IP_PROTOCOL_SCTP  = 132
 IP_PROTOCOL_UDPLITE = 136
+
+# ===== IPv6 Extension Header Types =====
+EXTENSION_HEADER_HOP_BY_HOP_OPTIONS = 0
+EXTENSION_HEADER_ROUTING            = 43
+EXTENSION_HEADER_FRAGMENT           = 44
+EXTENSION_HEADER_ESP                = 50
+EXTENSION_HEADER_AUTHENTICATION     = 51
+EXTENSION_HEADER_DESTINATION_OPTIONS= 60
+EXTENSION_HEADER_MOBILITY           = 135
+EXTENSION_HEADER_HOST_ID_PROTOCOL   = 139
+EXTENSION_HEADER_SHIM6_PROTOCOL     = 140
+EXTENSION_HEADER_RESERVED0          = 253
+EXTENSION_HEADER_RESERVED1          = 254
+EXTENSION_HEADER_NOTHING            = 59
 
 def print_mac(pkt, offset):
     print(':'.join(["{:x}".format(x) for x in pkt[offset:offset+6]]))
@@ -237,12 +260,120 @@ def get_pkt_docoder(ethtype):
     elif ethtype == ETHERTYPE_WOL:
         print("TODO: WOL decoder")
     elif ethtype == ETHERTYPE_IPV6:
-        print("TODO: IPv6 decoder")
+        return _ipv6_decoder
     else:
         print("I'm not writing a decoder for this")
     return None
 
+def _ipv6_next_header(pkt, offset):
+    next_header = pkt[offset]
+    next_headers = {
+        EXTENSION_HEADER_HOP_BY_HOP_OPTIONS: "Hop-by-Hop Options",
+        EXTENSION_HEADER_ROUTING: "Routing",
+        EXTENSION_HEADER_FRAGMENT: "Fragment",
+        EXTENSION_HEADER_ESP: "Encapsulating Security Payload",
+        EXTENSION_HEADER_AUTHENTICATION: "Authentication Header",
+        EXTENSION_HEADER_DESTINATION_OPTIONS: "Destination Options",
+        EXTENSION_HEADER_MOBILITY: "Mobility",
+        EXTENSION_HEADER_HOST_ID_PROTOCOL: "Host Identity Protocol",
+        EXTENSION_HEADER_SHIM6_PROTOCOL: "Shim6 Protocol",
+        EXTENSION_HEADER_RESERVED0: "Reserved for future use: {}".format(EXTENSION_HEADER_RESERVED0),
+        EXTENSION_HEADER_RESERVED1: "Reserved for future use: {}".format(EXTENSION_HEADER_RESERVED1),
+        EXTENSION_HEADER_NOTHING: "{}: Ignore anything following this header.".format(EXTENSION_HEADER_NOTHING),
+    }
+    nhstr = next_headers.get(next_header, None)
+    if nhstr is None:
+        protocol, protostr = _ipv4_protocol(pkt, offset)
+        return (False, protocol, protostr)
+    return (True, next_header, "IPv6 Ext: " + nhstr)
+
+def _ipv6_ip(pkt, offset):
+    l = []
+    for n in range(8):
+        # Group as 16-bit hex numbers
+        _b = (pkt[offset+(2*n)] << 8) + pkt[offset+(2*n + 1)]
+        if _b == 0:
+            # IPv6 address notation allows zeros to be skipped
+            l.append("")
+        else:
+            l.append("{:04x}".format(_b))
+    return ":".join(l)
+
+def _ipv6_ext_header_decoder(pkt, offset, header_type):
+    if header_type == EXTENSION_HEADER_FRAGMENT:
+        ext_length = 8
+    else:
+        ext_length = pkt[offset+1]
+    is_ext, next_header, nhstr = _ipv6_next_header(pkt, offset)
+    print("NEXT_HEADER: {}".format(nhstr))
+    if is_ext:
+        return _ipv6_ext_header_decoder(pkt, offset + ext_length, next_header)
+    else:
+        payload = pkt[offset+ext_length:]
+        if (next_header == IP_PROTOCOL_ICMP):
+            _ipv4_icmp_decoder(payload)
+        elif (next_header == IP_PROTOCOL_UDP):
+            _ipv4_udp_decoder(payload)
+        if (next_header == IP_PROTOCOL_IPV6_ICMP):
+            _ipv6_icmp_decoder(payload)
+        else:
+            print("No decoder for {}".format(nhstr))
+    return
+
+def _ipv6_icmp_decoder(payload):
+    print("TODO IPv6_ICMP decoder")
+    return
+
+def _ipv6_decoder(pkt):
+    version = pkt[OFFSET_IPV6_VERSION_TC_FLOWLABEL] >> 4
+    if version != 6:
+        print("=== ERROR: IPv6 Version is {}. Should be 6".format(version))
+    payload_len = (pkt[OFFSET_IPV6_PAYLOAD_LENGTH] << 8) + pkt[OFFSET_IPV6_PAYLOAD_LENGTH+1]
+    print("PAYLOAD_LENGTH: {}".format(payload_len))
+    is_ext, next_header, nhstr = _ipv6_next_header(pkt, OFFSET_IPV6_NEXT_HEADER)
+    print("NEXT_HEADER: {}".format(nhstr))
+    print("HOP_LIMIT: {}".format(pkt[OFFSET_IPV6_HOP_LIMIT]))
+    ipv6_src_ip = _ipv6_ip(pkt, OFFSET_IPV6_SRC_IP)
+    print("SOURCE_IP: {}".format(ipv6_src_ip))
+    ipv6_dest_ip = _ipv6_ip(pkt, OFFSET_IPV6_DEST_IP   )
+    print("DEST_IP: {}".format(ipv6_dest_ip))
+    if is_ext:
+        return _ipv6_ext_header_decoder(pkt, OFFSET_IPV6_PAYLOAD, next_header)
+    else:
+        payload = pkt[OFFSET_IPV6_PAYLOAD:]
+        if (next_header == IP_PROTOCOL_ICMP):
+            _ipv4_icmp_decoder(payload)
+        elif (next_header == IP_PROTOCOL_UDP):
+            _ipv4_udp_decoder(payload)
+        if (next_header == IP_PROTOCOL_IPV6_ICMP):
+            _ipv6_icmp_decoder(payload)
+        else:
+            print("No decoder for {}".format(nhstr))
+    return
+
+def findStart(pkt):
+    """Allow for packets with preamble and start sequence by first
+    finding the beginning of packet data and returning that index."""
+    preamble_detected = False
+    # Just look at the first 8 bytes
+    for n in range(8):
+        _b = pkt[n]
+        if preamble_detected:
+            if _b not in (0x55, 0xaa, 0xd5, 0xab):
+                # Give up and return the start
+                break
+            else:
+                if _b in (0xd5, 0xab):
+                    return n+1
+        else:
+            if _b in (0x55, 0xaa):
+                preamble_detected = True
+    return 0
+
 def decode(pkt):
+    start = findStart(pkt)
+    # Discard the preamble & SOF
+    pkt = pkt[start:]
     _len = len(pkt)
     if _len < MIN_PKT_SIZE:
         print("Pkt too small ({} < {})".format(len(pkt), MIN_PKT_SIZE))

@@ -3,6 +3,25 @@
 import json
 import os
 
+def strDict(_dict, depth=-1):
+    def _strToDepth(_dict, depth=0, indent=0):
+        """RECURSIVE"""
+        if depth == 0:
+            return []
+        l = []
+        sindent = " "*indent
+        for key, val in _dict.items():
+            if hasattr(val, 'keys'):
+                l.append(f"{sindent}{key} : dict size {len(val)}")
+                l.extend(_strToDepth(val, depth-1, indent+2))
+            else:
+                l.append(f"{sindent}{key} : {val}")
+        return l
+    l = []
+    l.extend(_strToDepth(_dict, depth, indent=2))
+    return '\n'.join(l)
+
+
 class JSONParser():
     # Helper values
     LINETYPE_PARAM = 0
