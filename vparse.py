@@ -25,6 +25,110 @@ def _int(x):
     except ValueError:
         return None
 
+class _ModuleInstantiationHelper():
+    def __init__(self, modname, instname, parammap, portmap):
+        self.modname = modname.strip()
+        self.instname = instname.strip()
+        self._parammap = parammap.strip()
+        self._portmap = portmap.strip()
+        self.parse()
+
+    def parse(self):
+        self.paramMap = self._parseParamMap(self._parammap)
+        self.portMap = self._parsePortMap(self._portmap)
+        return
+
+    def __repr__(self):
+        return self.__str__()
+
+    def __str__(self):
+        ll = [
+            "_ModuleInstantiationHelper():",
+            "  instance {} of module {}".format(self.instname, self.modname),
+        ]
+        if len(self.paramMap) > 0:
+            ll.append("  Param Map")
+            for pname, pval in self.paramMap:
+                ll.append("    .{}({})".format(pname, pval))
+        if len(self.portMap) > 0:
+            ll.append("  Port Map")
+            for pname, pval in self.portMap:
+                ll.append("    .{}({})".format(pname, pval))
+
+    @classmethod
+    def _parseParamMap(cls, line):
+        _map = []
+        # Remove outer parens
+        line = line.strip()
+        if (line[0] == '(') and (line[-1] == ')'):
+            line = line[1:-1]
+        pdecs = cls._splitByCommas(line)
+        for pdec in pdecs:
+            name, value = cls._parseParamDec(pdec)
+            _map.append((name, value))
+        return _map
+
+    @staticmethod
+    def _parseParamDec(line):
+        # Handle two types:
+        #   1. Positional
+        #       40
+        #       "true"
+        #   2. Named
+        #       .foo(40)
+        #       .bar("true")
+        line = line.strip()
+        restr = "\.([^(]+)\((.+)\)"
+        _match = re.match(restr, line)
+        if _match:
+            # Named type
+            name, value = _match.groups()
+        else:
+            # Positional type
+            name = ""
+            value = line
+        return (name, value)
+
+    @classmethod
+    def _parsePortMap(cls, line):
+        _map = []
+        # Remove outer parens
+        line = line.strip()
+        if (line[0] == '(') and (line[-1] == ')'):
+            line = line[1:-1]
+        pdecs = cls._splitByCommas(line)
+        for pdec in pdecs:
+            name, value = cls._parsePortDec(pdec)
+            _map.append((name, value))
+        return _map
+
+    @staticmethod
+    def _parsePortDec(line):
+        # Handle two types:
+        #   1. Positional
+        #       foo
+        #       bar[4:0]
+        #       8'ha5
+        #   2. Named
+        #       .foo(foo)
+        #       .foo(bar[4:0])
+        #       .foo(8'ha5)
+        line = line.strip()
+        restr = "\.([^(]+)\((.+)\)"
+        _match = re.match(restr, line)
+        if _match:
+            # Named type
+            name, value = _match.groups()
+        else:
+            # Positional type
+            name = ""
+            value = line
+        return (name, value)
+
+    @staticmethod
+    def _splitByCommas(line):
+        return VParser._splitByCommas(line)
+
 class VParser():
     # = Regexps =
     # Hit on any Verilog module declaration
@@ -51,6 +155,19 @@ class VParser():
     LINETYPE_PORT  = 0
     LINETYPE_MACRO = 1
 
+    LINETYPE_UNKNOWN                = 2
+    LINETYPE_MODULE_DECLARATION     = 3
+    LINETYPE_MODULE_INSTANTIATION   = 4
+    LINETYPE_INITIAL_BEGIN_BLOCK    = 5
+    LINETYPE_INITIAL_LINE           = 6
+    LINETYPE_ALWAYS_BEGIN_BLOCK     = 7
+    LINETYPE_ALWAYS_LINE            = 8
+    LINETYPE_ASSIGN                 = 9
+    LINETYPE_PARAMETER              = 10
+    LINETYPE_LOCALPARAM             = 11
+    LINETYPE_GENERATE               = 12
+    LINETYPE_SYSCALL                = 13
+
     def __init__(self, filename = ""):
         self.filename = filename
         self.valid = False
@@ -65,30 +182,45 @@ class VParser():
         if not os.path.exists(self.filename):
             print(f"{self.filename} does not exist")
             return
-        nline = 1
+        nline = 0
         multi = False # In multi-line comment
         comments = {}
         with open(self.filename, 'r') as fd:
             procLine = ""
-            line = fd.readline()
+            ncomment = 0
+            line = True
             while line:
-                if multi:
-                    comment, line, ends = self.endsComment(line)
-                    if len(comment) > 0:
-                        comments[nline] = comment
-                    if ends:
-                        multi = False
-                else:
-                    line, comment, multi = self.hasComment(line)
-                    if len(comment) > 0:
-                        comments[nline] = comment
-                    procLine += line
+                line = fd.readline()
+                nline += 1
+                if True:
+                    # NEW-style
+                    ncomment, codeLine, commentLine = self.commentLevel(line, ncomment)
+                    if len(commentLine) > 0:
+                        comments[nline] = commentLine
+                    if len(codeLine) == 0:
+                        continue
+                    procLine += codeLine
                     if self.isComplete(procLine):
-                        #print(f"processing: {procLine}")
+                        print(f"processing: {procLine}")
                         self.process(procLine)
                         procLine = ""
-                nline += 1
-                line = fd.readline()
+                else:
+                    # OLD-style
+                    if multi:
+                        comment, line, ends = self.endsComment(line)
+                        if len(comment) > 0:
+                            comments[nline] = comment
+                        if ends:
+                            multi = False
+                    else:
+                        line, comment, multi = self.hasComment(line)
+                        if len(comment) > 0:
+                            comments[nline] = comment
+                        procLine += line
+                        if self.isComplete(procLine):
+                            #print(f"processing: {procLine}")
+                            self.process(procLine)
+                            procLine = ""
         self._parsed = True
         #print("COMMENTS")
         #for nline, comment in comments.items():
@@ -96,6 +228,47 @@ class VParser():
         #printSummary()
         self.valid = True
         return
+
+    @staticmethod
+    def commentLevel(line, ncomment=0):
+        """
+        Returns (ncomment, codestring, commentstring)
+        'ncomment':
+            +1: the line enters a multi-line comment.
+            -1: the line exits a multi-line comment.
+             0: the line both exits and enters a multi-line comment.
+             0: the line neither enters nor exits a multi-line comment.
+        'codestring' is any portion of the line that is not within a comment (could be empty)
+        'commentstring' is any portion of the line that is within a comment (could be empty)
+        """
+        ml_in = "/*"
+        ml_out = "*/"
+        out_lines = []
+        in_lines = []
+        if ncomment > 0:
+            line_in = line
+            line_out = ""
+        else:
+            line_in = ""
+            line_out = line
+        if (ml_in not in line_out) and (ml_out not in line_in):
+            return (ncomment, line_out, line_in)
+        while (ml_in in line_out) or (ml_out in line_in):
+            # Handle entering comments
+            if ml_in in line_out:
+                line_out, line_in = line_out.split(ml_in, maxsplit=1)
+                out_lines.append(line_out)
+                line_out = ""
+                ncomment += 1
+            # Handle exiting comments
+            if ml_out in line_in:
+                line_in, line_out= line_in.split(ml_out, maxsplit=1)
+                in_lines.append(line_in)
+                line_in = ""
+                ncomment -= 1
+        out_lines.append(line_out)
+        in_lines.append(line_in)
+        return (ncomment, "".join(out_lines), "".join(in_lines))
 
     def getPorts(self):
         """Return list of (linetype, name, dirstr, rangeStart, rangeEnd), one for
@@ -136,7 +309,8 @@ class VParser():
                 print(f"  {dirstr}{rstr}{name}")
         return
 
-    def isComplete(self, line):
+    @classmethod
+    def isComplete(cls, line):
         """Return True if line is ready for processing.  This is tricky because there are
         so many top-level cases to handle."""
         # TODO
@@ -158,9 +332,224 @@ class VParser():
         #       Ends in endgenerate
         #   macros
         #       Ends after one line
-        if line.strip().endswith(';'):
-            return True
+        linetype = cls.lineType(line)
+        semicolon_enders = (
+            cls.LINETYPE_MODULE_DECLARATION,
+            cls.LINETYPE_ASSIGN,
+            cls.LINETYPE_ALWAYS_LINE,
+            cls.LINETYPE_INITIAL_LINE,
+            cls.LINETYPE_PARAMETER,
+            cls.LINETYPE_LOCALPARAM,
+        )
+        if linetype in semicolon_enders:
+            if line.strip().endswith(';'):
+                return True
+        elif linetype in (cls.LINETYPE_ALWAYS_BEGIN_BLOCK, cls.LINETYPE_INITIAL_BEGIN_BLOCK):
+            if line.strip().endswith("end"):
+                return True
+        elif linetype == cls.LINETYPE_GENERATE:
+            if line.strip().endswith("endgenerate"):
+                return True
         return False
+
+    @classmethod
+    def lineType(cls, line):
+        # To handle:
+        #   Module declaration
+        #       Ends in semicolon
+        #   initial and always blocks
+        #       If 'begin' keyword; use context count to find matching 'end' keyword
+        #       Otherwise ends with semicolon
+        #   assign
+        #       Ends in semicolon
+        #   parameter
+        #       Ends in semicolon
+        #   localparam
+        #       Ends in semicolon
+        #   module instantiation
+        #       Ends in semicolon
+        #   generate
+        #       Ends in endgenerate
+        #   macros
+        #       Ends after one line
+        #   syscalls:
+        #       Ends in semicolon
+        # === Handle keyword blocks first (they're easiest)
+        ls = line.strip()
+        if ls.startswith("module"):
+            return cls.LINETYPE_MODULE_DECLARATION
+        elif ls.startswith("initial"):
+            lss = ls.split()
+            if len(lss) > 1 and lss[1].strip() == "begin":
+                return cls.LINETYPE_INITIAL_BEGIN_BLOCK
+            else:
+                return cls.LINETYPE_INITIAL_LINE
+        elif ls.startswith("always"):
+            return cls._getLineTypeAlways(ls)
+        elif ls.startswith("assign"):
+            return cls.LINETYPE_ASSIGN
+        elif ls.startswith("parameter"):
+            return cls.LINETYPE_PARAMETER
+        elif ls.startswith("localparam"):
+            return cls.LINETYPE_LOCALPARAM
+        elif ls.startswith("generate"):
+            return cls.LINETYPE_GENERATE
+        elif ls.startswith("`"):
+            return cls.LINETYPE_MACRO
+        # Need additional checks to confirm module instantiation (LINETYPE_MODULE_INSTANTIATION)
+        return cls.LINETYPE_UNKNOWN
+
+    def _getLineTypeAlways(cls, line):
+        """Get the LINETYPE of a string 'line' starting with keyword 'always'"""
+        segs = cls._splitBySpace(line.strip())
+        # Handle two types:
+        #   always @(posedge clk) [begin]
+        #   always #10 [begin]
+        if len(segs) == 0 or segs[0].strip() != "always":
+            return cls.LINETYPE_UNKNOWN
+        if len(segs) > 1:
+            if segs[1].strip() == "begin":
+                return cls.LINETYPE_ALWAYS_BEGIN_BLOCK
+        if len(segs) > 2:
+            if segs[2].strip() == "begin":
+                return cls.LINETYPE_ALWAYS_BEGIN_BLOCK
+        return cls.LINETYPE_ALWAYS_LINE
+
+    @classmethod
+    def parseModuleInstantiation(cls, line):
+        # Formats:
+        #   1: modname instname (....);
+        #   2: modname #(....) instname (....);
+        mtype = 1
+        if '#' in line:
+            mtype = 2
+            pix = line.index('#')
+            if line[pix+1] != '(':
+                # Don't tolerate whitespace between # and (
+                # Syntax error or non-module-instantiation
+                return None
+            modname = line[:pix]
+            paramdec, line = self._popParens(line[pix+1:])
+        if '(' not in line:
+            # Syntax error or non-module-instantiation
+            return None
+        pix = line.index('(')
+        modinst = line[:pix]
+        if mtype == 1:
+            paramdec = ""
+            try:
+                modname, instname = modinst.split()
+            except ValueError:
+                # Syntax error or non-module-instantiation
+                return None
+        else:
+            instname = modinst
+        portmap, trail = self._popParens(line[pix+1:])
+        if trail.strip() != ';':
+            # Syntax error or non-module-instantiation
+            return None
+        return _ModuleInstantiationHelper(modname, instname, paramdec, portmap)
+
+    @staticmethod
+    def _popParens(line):
+        """Split off the first chunk of line contained within parentheses:
+        E.g. if line == "(foo(), bar(bop())) lorem ipsum", then
+            returns ("(foo(), bar(bop()))", " lorem ipsum")
+        """
+        if not '(' in line:
+            return ("", line)
+        #pix = line.index('(')
+        plevel = 0
+        escaped = False
+        instring = False
+        foundParen = False
+        n = 0
+        for n in range(len(line)):
+            c = line[n]
+            if c == '"':
+                if not escaped:
+                    if instring:
+                        instring = False
+                    else:
+                        instring = True
+                escaped = False
+            elif c == '\\':
+                if not escaped:
+                    escaped = True
+                else:
+                    escaped = False
+            elif c == '(':
+                if not instring and not escaped:
+                    foundParen = True
+                    plevel += 1
+                escaped = False
+            elif c == ')':
+                if not instring and not escaped:
+                    plevel -= 1
+                escaped = False
+            if foundParen and plevel == 0:
+                break
+        return (line[:n+1], line[n+1:])
+
+    @staticmethod
+    def _splitBySpace(line):
+        """Split line by whitespace, respecting parentheses and quotes"""
+        segments = cls._splitByCharacters(line, (' ', '\n', '\t'))
+        _segments = []
+        # Filter out any empty strings
+        for segment in segments:
+            if len(segment) > 0:
+                _segments.append(segment)
+        return _segments
+
+    @classmethod
+    def _splitByCommas(cls, line):
+        """Split line by commas, respecting parentheses and quotes"""
+        return cls._splitByCharacters(line, (',',))
+
+    @staticmethod
+    def _splitByCharacters(line, splitchars=(',',)):
+        """Split line by commas, respecting parentheses and quotes"""
+        # Handle explicit simple case first
+        if ',' not in line:
+            return [line]
+        ixs = []
+        plevel = 0
+        escaped = False
+        instring = False
+        for n in range(len(line)):
+            c = line[n]
+            if c == '"':
+                if not escaped:
+                    if instring:
+                        instring = False
+                    else:
+                        instring = True
+                escaped = False
+            elif c == '\\':
+                if not escaped:
+                    escaped = True
+                else:
+                    escaped = False
+            elif c == '(':
+                if not instring and not escaped:
+                    plevel += 1
+                escaped = False
+            elif c == ')':
+                if not instring and not escaped:
+                    plevel -= 1
+                escaped = False
+            elif c in splitchars:
+                if not instring and not escaped and plevel == 0:
+                    ixs.append(n)
+                escaped = False
+        segments = []
+        ixlast = 0
+        for n in range(len(ixs)):
+            segments.append(line[ixlast:ixs[n]])
+            ixlast = ixs[n]+1
+        segments.append(line[ixlast:])
+        return segments
 
     def process(self, line):
         if not self._parsedModDecl:
@@ -732,6 +1121,48 @@ def test_VParser_captureLine():
     }
     return testfunction(d, VParser.captureLine)
 
+def test_VParser_popParens():
+    d = {
+        "foo" : ("", "foo"),
+        "foo (bar)" : ("foo (bar)", ""),
+        "(foo) bar" : ("(foo)", " bar"),
+        "(foo(), bar(bop())) baz" : ("(foo(), bar(bop()))", " baz"),
+        "(foo(), bar(bop())) baz (fwip)" : ("(foo(), bar(bop()))", " baz (fwip)"),
+        "\"(foo)\"(bop) bar" : ("\"(foo)\"(bop)", " bar"),
+    }
+    return testfunction(d, VParser._popParens)
+
+def test_VParser_splitByCommas():
+    d = {
+        "foo" : ["foo"],
+        "foo, bar" : ["foo", " bar"],
+        "foo, bar,  baz" : ["foo", " bar", "  baz"],
+        "foo(,), bar,  baz" : ["foo(,)", " bar", "  baz"],
+        "foo\",\", bar,  baz" : ["foo\",\"", " bar", "  baz"],
+    }
+    return testfunction(d, VParser._splitByCommas)
+
+def test__ModuleInstantiationHelper_parseParamMap():
+    d = {
+        "(foo)" : [("", "foo")],
+        "(foo, bar)" : [("", "foo"), ("", "bar")],
+        "(foo, bar, 1'b0)" : [("", "foo"), ("", "bar"), ("", "1'b0")],
+        "(\"true\", 100)" : [("", "\"true\""), ("", "100")],
+        "(.FOO(foo), .BAR(bar))" : [("FOO", "foo"), ("BAR", "bar")],
+        "(.FOO(\"true\"), .BAR(100))" : [("FOO", "\"true\""), ("BAR", "100")],
+    }
+    return testfunction(d, _ModuleInstantiationHelper._parseParamMap)
+
+def test__ModuleInstantiationHelper_parsePortMap():
+    d = {
+        "(foo)" : [("", "foo")],
+        "(foo, bar)" : [("", "foo"), ("", "bar")],
+        "(foo, bar, 1'b0)" : [("", "foo"), ("", "bar"), ("", "1'b0")],
+        "(.FOO(foo), .BAR(bar))" : [("FOO", "foo"), ("BAR", "bar")],
+        "(.foo(baz[4:0]), .bar(100))" : [("foo", "baz[4:0]"), ("bar", "100")],
+    }
+    return testfunction(d, _ModuleInstantiationHelper._parsePortMap)
+
 # TODO needs update
 def test_getSize():
     d = {
@@ -904,7 +1335,11 @@ def doTests():
         ("splitBoolean",    test_VParser_splitBoolean,  0),
         ("hasComment",      test_VParser_hasComment,    0),
         ("endsComment",     test_VParser_endsComment,   0),
-        ("captureLine",     test_VParser_captureLine,   1),
+        ("captureLine",     test_VParser_captureLine,   0),
+        ("_popParens",      test_VParser_popParens,     0),
+        ("_splitByCommas",  test_VParser_splitByCommas, 0),
+        ("_parseParamMap",  test__ModuleInstantiationHelper_parseParamMap, 1),
+        ("_parsePortMap",   test__ModuleInstantiationHelper_parsePortMap, 1),
         ("getSize",         test_getSize,               0),
         ("parseLiteral",    test_parseLiteral,          0),
         ("getAssign",       test_getAssign,             0),

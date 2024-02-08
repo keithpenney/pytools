@@ -371,6 +371,8 @@ def findStart(pkt):
     return 0
 
 def decode(pkt):
+    # Sanitize input
+    pkt = [int(x) for x in pkt]
     start = findStart(pkt)
     # Discard the preamble & SOF
     pkt = pkt[start:]
