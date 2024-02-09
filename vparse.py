@@ -25,6 +25,46 @@ def _int(x):
     except ValueError:
         return None
 
+class ModuleInstantiation():
+    def __init__(self, modname, instname, parammap, portmap):
+        self.modname = modname
+        self.instname = instname
+        self.paramMap = parammap
+        self.portMap = portmap
+
+    def __str__(self):
+        ll = [
+            "ModuleInstantiation():",
+            "  instance {} of module {}".format(self.instname, self.modname),
+        ]
+        if len(self.paramMap) > 0:
+            ll.append("  Param Map")
+            for pname, pval in self.paramMap:
+                ll.append("    .{}({})".format(pname, pval))
+        if len(self.portMap) > 0:
+            ll.append("  Port Map")
+            for pname, pval in self.portMap:
+                ll.append("    .{}({})".format(pname, pval))
+        return "\n".join(ll)
+
+    def getPortConnection(self, portName=None, index=None):
+        if portName is not None:
+            for name, val in self.portMap:
+                if portName == name:
+                    return val
+        if index is not None and index < len(self.portMap):
+            return self.portMap[index][1]
+        return None
+
+    def getParamValue(self, paramName=None, index=None):
+        if paramName is not None:
+            for name, val in self.paramMap:
+                if paramName == name:
+                    return val
+        if index is not None and index < len(self.paramMap):
+            return self.paramMap[index][1]
+        return None
+
 class _ModuleInstantiationHelper():
     def __init__(self, modname, instname, parammap, portmap):
         self.modname = modname.strip()
@@ -32,6 +72,9 @@ class _ModuleInstantiationHelper():
         self._parammap = parammap.strip()
         self._portmap = portmap.strip()
         self.parse()
+
+    def get(self):
+        return ModuleInstantiation(self.modname, self.instname, self.paramMap, self.portMap)
 
     def parse(self):
         self.paramMap = self._parseParamMap(self._parammap)
@@ -54,40 +97,11 @@ class _ModuleInstantiationHelper():
             ll.append("  Port Map")
             for pname, pval in self.portMap:
                 ll.append("    .{}({})".format(pname, pval))
+        return "\n".join(ll)
 
     @classmethod
     def _parseParamMap(cls, line):
-        _map = []
-        # Remove outer parens
-        line = line.strip()
-        if (line[0] == '(') and (line[-1] == ')'):
-            line = line[1:-1]
-        pdecs = cls._splitByCommas(line)
-        for pdec in pdecs:
-            name, value = cls._parseParamDec(pdec)
-            _map.append((name, value))
-        return _map
-
-    @staticmethod
-    def _parseParamDec(line):
-        # Handle two types:
-        #   1. Positional
-        #       40
-        #       "true"
-        #   2. Named
-        #       .foo(40)
-        #       .bar("true")
-        line = line.strip()
-        restr = "\.([^(]+)\((.+)\)"
-        _match = re.match(restr, line)
-        if _match:
-            # Named type
-            name, value = _match.groups()
-        else:
-            # Positional type
-            name = ""
-            value = line
-        return (name, value)
+        return cls._parsePortMap(line)
 
     @classmethod
     def _parsePortMap(cls, line):
@@ -176,6 +190,8 @@ class VParser():
         self.params = []
         self._parsed = False
         self._parsedModDecl = False
+        # A list to contain any modules instantiated within the parent module
+        self.instantiated_modules = []
         self.readFile()
 
     def readFile(self):
@@ -200,9 +216,10 @@ class VParser():
                     if len(codeLine) == 0:
                         continue
                     procLine += codeLine
-                    if self.isComplete(procLine):
+                    linetype, iscomplete = self.isComplete(procLine)
+                    if iscomplete:
                         print(f"processing: {procLine}")
-                        self.process(procLine)
+                        self.process(procLine, linetype)
                         procLine = ""
                 else:
                     # OLD-style
@@ -217,9 +234,10 @@ class VParser():
                         if len(comment) > 0:
                             comments[nline] = comment
                         procLine += line
-                        if self.isComplete(procLine):
+                        linetype, iscomplete = self.isComplete(procLine)
+                        if iscomplete:
                             #print(f"processing: {procLine}")
-                            self.process(procLine)
+                            self.process(procLine, linetype)
                             procLine = ""
         self._parsed = True
         #print("COMMENTS")
@@ -287,6 +305,11 @@ class VParser():
         can be None, indicating a parameter with no bit range specified."""
         return self.params
 
+    def getModules(self):
+        """Return a list of ModuleInstantiation objects representing all the modules
+        instantiated within the parent."""
+        return self.instantiated_modules
+
     def printSummary(self):
         print(f"MODULE {self.modname}")
         for param in self.params:
@@ -307,6 +330,9 @@ class VParser():
                 else:
                     rstr = " "
                 print(f"  {dirstr}{rstr}{name}")
+        print(f"Instantiated modules:")
+        for module in self.getModules():
+            print(module)
         return
 
     @classmethod
@@ -343,14 +369,14 @@ class VParser():
         )
         if linetype in semicolon_enders:
             if line.strip().endswith(';'):
-                return True
+                return linetype, True
         elif linetype in (cls.LINETYPE_ALWAYS_BEGIN_BLOCK, cls.LINETYPE_INITIAL_BEGIN_BLOCK):
             if line.strip().endswith("end"):
-                return True
+                return linetype, True
         elif linetype == cls.LINETYPE_GENERATE:
             if line.strip().endswith("endgenerate"):
-                return True
-        return False
+                return linetype, True
+        return linetype, False
 
     @classmethod
     def lineType(cls, line):
@@ -427,28 +453,33 @@ class VParser():
             if line[pix+1] != '(':
                 # Don't tolerate whitespace between # and (
                 # Syntax error or non-module-instantiation
+                print("Don't tolerate whitespace between # and (")
                 return None
             modname = line[:pix]
-            paramdec, line = self._popParens(line[pix+1:])
+            paramdec, line = cls._popParens(line[pix+1:])
         if '(' not in line:
             # Syntax error or non-module-instantiation
+            print(f"No open parens in line {line}")
             return None
         pix = line.index('(')
         modinst = line[:pix]
         if mtype == 1:
             paramdec = ""
             try:
-                modname, instname = modinst.split()
+                modname, instname = modinst.split()[0:2]
             except ValueError:
                 # Syntax error or non-module-instantiation
+                print(f"Can't split {modinst}")
                 return None
         else:
             instname = modinst
-        portmap, trail = self._popParens(line[pix+1:])
+        portmap, trail = cls._popParens(line[pix:])
+        print(f"Pop portmap from: {line[pix:]}\n  Yields: {portmap}      {trail}")
         if trail.strip() != ';':
             # Syntax error or non-module-instantiation
+            print(f"No trailing semicolon in {trail}")
             return None
-        return _ModuleInstantiationHelper(modname, instname, paramdec, portmap)
+        return _ModuleInstantiationHelper(modname, instname, paramdec, portmap).get()
 
     @staticmethod
     def _popParens(line):
@@ -551,12 +582,16 @@ class VParser():
         segments.append(line[ixlast:])
         return segments
 
-    def process(self, line):
+    def process(self, line, linetype=LINETYPE_UNKNOWN):
         if not self._parsedModDecl:
             rval = self.parseModDecl(line)
             if rval:
                 self._parsedModDecl = True
                 self.modname, self.params, self.ports = rval
+        elif linetype == self.LINETYPE_MODULE_INSTANTIATION:
+            rval = self.parseModuleInstantiation(line)
+            if rval is not None:
+                self.instantiated_modules.append(rval)
         # Do other stuff like:
         #   Capture parameters
         return
@@ -1163,6 +1198,12 @@ def test__ModuleInstantiationHelper_parsePortMap():
     }
     return testfunction(d, _ModuleInstantiationHelper._parsePortMap)
 
+def test_VParser_parseModuleInstantiation():
+    ss = """foo #(.bar(1'b0), .baz("true")) foo_i (.clk(testclk), .din(data[3:0]));"""
+    vmod = VParser.parseModuleInstantiation(ss)
+    print(vmod)
+    return
+
 # TODO needs update
 def test_getSize():
     d = {
@@ -1338,8 +1379,8 @@ def doTests():
         ("captureLine",     test_VParser_captureLine,   0),
         ("_popParens",      test_VParser_popParens,     0),
         ("_splitByCommas",  test_VParser_splitByCommas, 0),
-        ("_parseParamMap",  test__ModuleInstantiationHelper_parseParamMap, 1),
-        ("_parsePortMap",   test__ModuleInstantiationHelper_parsePortMap, 1),
+        ("_parseParamMap",  test__ModuleInstantiationHelper_parseParamMap, 0),
+        ("_parsePortMap",   test__ModuleInstantiationHelper_parsePortMap, 0),
         ("getSize",         test_getSize,               0),
         ("parseLiteral",    test_parseLiteral,          0),
         ("getAssign",       test_getAssign,             0),
@@ -1550,4 +1591,5 @@ if __name__ == "__main__":
     import sys
     #doTests()
     #doVParserReadFile(sys.argv)
-    sys.exit(doInstantiate(sys.argv))
+    #sys.exit(doInstantiate(sys.argv))
+    test_VParser_parseModuleInstantiation()
