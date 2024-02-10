@@ -9,8 +9,11 @@
 #   2. Keep track of context with respect to multi-line comments
 #   3. Remove comments and store along with line start, stop
 
-# TODO
-#   Parsing debounce.v misses the last port and last parameter. FIXME!
+# Need Stateful Parsing:
+#   State by scope
+#       STATE_TOP           // top-level
+#       STATE_IN_BEGIN      // waiting for 'end' keyword; needs to be nestable
+#       others??
 
 import os
 import re
@@ -108,6 +111,8 @@ class _ModuleInstantiationHelper():
         _map = []
         # Remove outer parens
         line = line.strip()
+        if len(line) == 0:
+            return _map
         if (line[0] == '(') and (line[-1] == ')'):
             line = line[1:-1]
         pdecs = cls._splitByCommas(line)
@@ -181,6 +186,8 @@ class VParser():
     LINETYPE_LOCALPARAM             = 11
     LINETYPE_GENERATE               = 12
     LINETYPE_SYSCALL                = 13
+    LINETYPE_REG                    = 14
+    LINETYPE_WIRE                   = 15
 
     def __init__(self, filename = ""):
         self.filename = filename
@@ -208,9 +215,16 @@ class VParser():
             while line:
                 line = fd.readline()
                 nline += 1
+                # =========== Remove End-of-Line Comments ============
+                segs = self._splitEndComment(line)
+                codeLine = segs[0]
+                if len(segs) > 1:
+                    eolcomment = segs[1]
+                    comments[nline] = commentLine
                 if True:
                     # NEW-style
-                    ncomment, codeLine, commentLine = self.commentLevel(line, ncomment)
+                    # =========== Handle Multi-Line Comments ============
+                    ncomment, codeLine, commentLine = self.commentLevel(codeLine, ncomment)
                     if len(commentLine) > 0:
                         comments[nline] = commentLine
                     if len(codeLine) == 0:
@@ -218,9 +232,12 @@ class VParser():
                     procLine += codeLine
                     linetype, iscomplete = self.isComplete(procLine)
                     if iscomplete:
-                        print(f"processing: {procLine}")
+                        print(f"processing (linetype {linetype}): {procLine}")
                         self.process(procLine, linetype)
                         procLine = ""
+                    else:
+                        #print(f"Not processing: {procLine}")
+                        pass
                 else:
                     # OLD-style
                     if multi:
@@ -366,6 +383,9 @@ class VParser():
             cls.LINETYPE_INITIAL_LINE,
             cls.LINETYPE_PARAMETER,
             cls.LINETYPE_LOCALPARAM,
+            cls.LINETYPE_REG,
+            cls.LINETYPE_WIRE,
+            cls.LINETYPE_UNKNOWN,   # Let's discard unknown lines at semicolons too
         )
         if linetype in semicolon_enders:
             if line.strip().endswith(';'):
@@ -376,6 +396,9 @@ class VParser():
         elif linetype == cls.LINETYPE_GENERATE:
             if line.strip().endswith("endgenerate"):
                 return linetype, True
+        elif linetype == cls.LINETYPE_MACRO:
+            # Macros end after one line
+            return linetype, True
         return linetype, False
 
     @classmethod
@@ -420,6 +443,10 @@ class VParser():
             return cls.LINETYPE_LOCALPARAM
         elif ls.startswith("generate"):
             return cls.LINETYPE_GENERATE
+        elif ls.startswith("reg"):
+            return cls.LINETYPE_REG
+        elif ls.startswith("wire"):
+            return cls.LINETYPE_WIRE
         elif ls.startswith("`"):
             return cls.LINETYPE_MACRO
         # Need additional checks to confirm module instantiation (LINETYPE_MODULE_INSTANTIATION)
@@ -474,7 +501,7 @@ class VParser():
         else:
             instname = modinst
         portmap, trail = cls._popParens(line[pix:])
-        print(f"Pop portmap from: {line[pix:]}\n  Yields: {portmap}      {trail}")
+        #print(f"Pop portmap from: {line[pix:]}\n  Yields: {portmap}      {trail}")
         if trail.strip() != ';':
             # Syntax error or non-module-instantiation
             print(f"No trailing semicolon in {trail}")
@@ -540,9 +567,13 @@ class VParser():
 
     @staticmethod
     def _splitByCharacters(line, splitchars=(',',)):
-        """Split line by commas, respecting parentheses and quotes"""
+        """Split line by any chars in 'splitchars', respecting parentheses and quotes"""
         # Handle explicit simple case first
-        if ',' not in line:
+        inline = False
+        for char in splitchars:
+            if char in line:
+                inline = True
+        if not inline:
             return [line]
         ixs = []
         plevel = 0
@@ -582,16 +613,78 @@ class VParser():
         segments.append(line[ixlast:])
         return segments
 
+    @classmethod
+    def _splitEndComment(cls, line):
+        return cls._splitByString(line, splitstr="//", respect_quotes=True, respect_parens=False, allow_escape=False, max_splits=1)
+
+    @staticmethod
+    def _splitByString(line, splitstr="", respect_quotes=True, respect_parens=True, allow_escape=True, max_splits=0):
+        """Split line by string 'splitstr', respecting parentheses and quotes"""
+        # Handle explicit simple case first
+        sl = len(splitstr)
+        if (sl == 0) or (len(line) < sl):
+            return [line]
+        chars = [c for c in line[:len(splitstr)]]
+        ixs = []
+        plevel = 0
+        escaped = False
+        instring = False
+        for n in range(len(splitstr)-1, len(line)):
+            # Shift register
+            c = line[n]
+            chars = chars[1:] + [c]
+            if c == '"':
+                if not escaped:
+                    if instring:
+                        instring = False
+                    else:
+                        instring = True
+                escaped = False
+            elif c == '\\':
+                if allow_escape:
+                    if not escaped:
+                        escaped = True
+                    else:
+                        escaped = False
+            elif c == '(':
+                if respect_parens:
+                    if not instring and not escaped:
+                        plevel += 1
+                    escaped = False
+            elif c == ')':
+                if respect_parens:
+                    if not instring and not escaped:
+                        plevel -= 1
+                    escaped = False
+            elif "".join(chars) == splitstr:
+                if not instring and not escaped and plevel == 0:
+                    ixs.append(n)
+                    if len(ixs) == max_splits:
+                        break
+                escaped = False
+        segments = []
+        ixlast = 0
+        for n in range(len(ixs)):
+            segments.append(line[ixlast:ixs[n]-(sl-1)])
+            ixlast = ixs[n]+1
+        segments.append(line[ixlast:])
+        return segments
+
     def process(self, line, linetype=LINETYPE_UNKNOWN):
         if not self._parsedModDecl:
+            print("parseModDecl")
             rval = self.parseModDecl(line)
             if rval:
                 self._parsedModDecl = True
                 self.modname, self.params, self.ports = rval
-        elif linetype == self.LINETYPE_MODULE_INSTANTIATION:
+            print(f"rval = {rval}")
+        if linetype in (self.LINETYPE_UNKNOWN, self.LINETYPE_MODULE_INSTANTIATION):
+            print("parseModuleInstantiation")
             rval = self.parseModuleInstantiation(line)
             if rval is not None:
                 self.instantiated_modules.append(rval)
+        else:
+            print(f"Skipping linetype {linetype}")
         # Do other stuff like:
         #   Capture parameters
         return
@@ -1199,9 +1292,15 @@ def test__ModuleInstantiationHelper_parsePortMap():
     return testfunction(d, _ModuleInstantiationHelper._parsePortMap)
 
 def test_VParser_parseModuleInstantiation():
-    ss = """foo #(.bar(1'b0), .baz("true")) foo_i (.clk(testclk), .din(data[3:0]));"""
-    vmod = VParser.parseModuleInstantiation(ss)
-    print(vmod)
+    ss = [
+        "foo #(.bar(1'b0), .baz(\"true\")) foo_i (.clk(testclk), .din(data[3:0]));",
+        "ls_mod #(\n  .bar(1'b0),\n  .baz(\"true\")\n) ls_mod_i (\n  .clk(testclk),\n  .din(data[3:0])\n);",
+        "larf_module_fancy lmf_i (\n  .clk(clk),\n  .addr(lb_addr),\n  .dout(lmf_dout)\n);",
+        "boof boof_i (\n  clk,\n  lb_addr,\n  lmf_dout\n);",
+    ]
+    for _s in ss:
+        vmod = VParser.parseModuleInstantiation(_s)
+        print(vmod)
     return
 
 # TODO needs update
@@ -1408,6 +1507,19 @@ def doTests():
         print(f"PASS : {summary}")
     return
 
+def test_VParser_splitEndComment():
+    lines = [
+        "hello there // this is a comment",
+        "I don't have a comment",
+        "// I'm entirely a comment!",
+        "This string \"this one here // has a comment\" has a comment // but you should ignore it!",
+    ]
+    for line in lines:
+        segs = VParser._splitEndComment(line)
+        print(f"line")
+        for seg in segs:
+            print(f"  {seg}")
+
 def doVParserReadFile(argv):
     USAGE = f"python3 {argv[0]} filename"
     if len(argv) < 2:
@@ -1587,9 +1699,39 @@ def doInstantiate(argv):
     else:
         return 1
 
+def doSubModules(args):
+    vp = VParser(args.filename)
+    mods = vp.getModules()
+    print("{} modules instantiated".format(len(mods)))
+    print(f"args.modname = {args.modname}")
+    if args.modname in ("list", "*"):
+        for mod in mods:
+            print(f"mod = {mod}")
+    else:
+        for mod in mods:
+            if fnmatch.fnmatch(args.modname, mod.modname):
+                print(mod)
+    return True
+
+def doParse():
+    import argparse
+    parser = argparse.ArgumentParser(description="Hand-rolled Verilog parser")
+    parser.set_defaults(handler=lambda args: parser.print_help())
+    parser.add_argument('filename', default=None, help="The Verilog file to parse.")
+    subparsers = parser.add_subparsers(help="Subcommands")
+    # ==== modules ====
+    parserModules = subparsers.add_parser("modules", help="Parse and query modules.")
+    parserModules.add_argument('modname', default=None, help="The name of the module you're interested in.")
+    parserModules.set_defaults(handler=doSubModules)
+    args = parser.parse_args()
+    return args.handler(args)
+
+
 if __name__ == "__main__":
     import sys
     #doTests()
     #doVParserReadFile(sys.argv)
     #sys.exit(doInstantiate(sys.argv))
-    test_VParser_parseModuleInstantiation()
+    #test_VParser_parseModuleInstantiation()
+    doParse()
+    #test_VParser_splitEndComment()
