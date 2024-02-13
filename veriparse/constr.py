@@ -10,6 +10,7 @@
 #   And finally, let's see if we can enforce this rule:
 #     Each tag can only exist in one Perspective (i.e. 1-to-1 mapping of perspective and tag type)
 
+import colorama
 
 # TODO:
 #   I'm currently dynamically building the tagDict when needed.  If it turns out to be a critical resource, we can
@@ -55,9 +56,8 @@ class Perspective():
 
     @classmethod
     def printColor(cls, ss, color=COLOR_DEFAULT, end="\n"):
-        from colorama import Fore, Style
-        ccolor = getattr(Fore, cls._colorama_map.get(color))
-        print(ccolor + ss + Style.RESET_ALL, end=end)
+        ccolor = getattr(colorama.Fore, cls._colorama_map.get(color))
+        print(ccolor + ss + colorama.Style.RESET_ALL, end=end)
         return
 
     def __init__(self, stop, start=0, tagmap=[]):
@@ -193,7 +193,9 @@ class Perspective():
         return [x for x in td.keys()]
 
     def copy(self):
-        return Perspective(self.stop, self.start, self._map)
+        psp = Perspective(self.stop, self.start)
+        psp._map = self._map.copy()
+        return psp
 
 def test_Perspective_tag():
     # Preloaded tag map
@@ -376,6 +378,12 @@ class StringToken():
         self.tag = tag
         self.start = start
         self.stop = stop
+
+    def __str__(self):
+        return f"Token([{self.start}, {self.stop}], tag = {self.tag}, value = {self.value})"
+
+    def __repr__(self):
+        return self.__str__()
 
 def testConStr():
     sa = ConStr("String A")

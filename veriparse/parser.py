@@ -2,7 +2,13 @@
 
 # A just-for-fun test of a generic parsing concept
 
+import re
 from constr import ConStr, Perspective
+
+# TODO:
+#   * Add Grouper option for collecting from an opening grouping symbol (i.e. '[') to its mating closing grouping symbol (i.e. ']')
+#   * Create a new Perspective at the level of a "structure" where each entry will be one of: TAG_STATEMENT, TAG_BLOCK, TAG_MODULEDECLARATION
+#       Start with "comments" Perspective and tag based on the limits of the structResults
 
 KEYWORD_MODULE = 0
 KEYWORD_WIRE = 1
@@ -38,11 +44,13 @@ RESERVED_BRACKET_CLOSE = 12
 RESERVED_COMMA = 13
 RESERVED_POUNDPAREN_OPEN = 14
 RESERVED_SEMICOLON = 15
+RESERVED_COLON = 16
 
 MACRO_DEFINE = 0
 MACRO_IFDEF = 1
 MACRO_ENDIF = 2
 
+TAG_GENERIC = ConStr.TagGeneric
 TAG_KEYWORD = 1
 TAG_COMMENT = 2
 TAG_STRING = 3
@@ -130,6 +138,7 @@ reserved = {
     RESERVED_BRACKET_CLOSE: ("]", "\]"),
     RESERVED_COMMA: (",", "\,"),
     RESERVED_SEMICOLON: (";", ";"),
+    RESERVED_COLON: (":", "\:"),
 }
 
 macros = {
@@ -143,15 +152,277 @@ COMMENT_SINGLE_LINE = "//"
 COMMENT_MULTI_LINE_OPEN = "/*"
 COMMENT_MULTI_LINE_CLOSE = "*/"
 
-"""
-whitespace = {
-    WHITESPACE_SPACE: " ",
-    WHITESPACE_TAB: "\t",
-    WHITESPACE_NEWLINE: "\n",
-}
-"""
+def _tag(t):
+    if isinstance(t.tag, tuple) or isinstance(t.tag, list):
+        return t.tag[0]
+    else:
+        return t.tag
 
-class Parser():
+def _subtag(t):
+    if isinstance(t.tag, tuple) or isinstance(t.tag, list):
+        return t.tag[1]
+    else:
+        return None
+
+class StructureDefinition():
+    _re_kw = "k\{(\w)+}"
+    _re_tag = "t\{(\w)+}"
+    _re_subtag = "s\{(\w)+}"
+    def __init__(self, ss):
+        pass
+
+class StructParser():
+    collect = 2
+    must = 1
+    can = 0
+    def __init__(self, name, structdef, tag=None):
+        self.name = name
+        self._structdef = structdef
+        self.tag = tag
+        self.reset()
+
+    def reset(self):
+        self.structs = []
+        self.struct = []
+        self.npart = 0
+        self.retry = False
+
+    def doParse(self, token, retrying, verbose=False):
+        # 'retry' = True means try this same token again
+        if retrying != self.retry:
+            return False
+        self.retry = False
+        tag = _tag(token)
+        subtag = _subtag(token)
+        #print(f"token = {token}")
+        tgt_tag, tgt_subtag, do, ef = self._structdef[self.npart]
+        hit = tgt_tag == tag
+        if ef is not None:
+            if (not hit) and ef(token):
+                raise SyntaxError(f"Syntax error parsing structment on token: {token}")
+        if tgt_subtag is not None:
+            hit = hit and (tgt_subtag == subtag)
+        if (do == self.can):
+            if not hit:
+                # This token must match the next rule
+                if verbose:
+                    print(f"[{self.npart}] Pass on optional: {token}")
+                self.retry = True
+            else:
+                if verbose:
+                    print(f"[{self.npart}] Hit on token: {token}")
+                self.struct.append(token)
+            self.npart += 1
+        elif ((do == self.must) and hit):
+            if verbose:
+                print(f"[{self.npart}] Hit on token: {token}")
+            self.struct.append(token)
+            self.npart += 1
+        elif do == self.collect:
+            if verbose:
+                print(f"[{self.npart}] Collecting token: {token}")
+            self.struct.append(token)
+            if hit:
+                self.npart += 1
+        else:
+            if verbose:
+                print(f"[{self.npart}] Reset; not the target structure")
+            self.npart = 0
+            self.struct = []
+        if self.npart == len(self._structdef):
+            if verbose:
+                print(f"Assign completed")
+            self.structs.append(self.struct)
+            self.struct = []
+            self.npart = 0
+        return self.retry
+
+    def get(self):
+        self.structs.append(self.struct)
+        return self.structs
+
+class Grouper():
+    def __init__(self, *args, **kwargs):
+        self.structparsers = []
+        self.tk = Tokenizer(*args, **kwargs)
+
+    def tokenize(self, s):
+        self.cs = self.tk.parse(s)
+        return
+
+    def parseStructure(self):
+        # Assign is:
+        self.cs.setActivePerspective("keywords")
+        ics = iter(self.cs)
+        getNewToken = True
+        retry = False
+        while True:
+            if not retry:
+                try:
+                    token = next(ics)
+                except StopIteration:
+                    break
+            retrying = retry
+            retry = False
+            for sp in self.structparsers:
+                verbose = False
+                if sp.doParse(token, retrying, verbose):
+                    retry = True
+        structResults = {}
+        for sp in self.structparsers:
+            structResults[sp.name] = sp.get()
+        return structResults
+
+    def printStructs(self, structs, label=""):
+        print(f"=== {label} ===")
+        for n in range(len(structs)):
+            struct = structs[n]
+            print("  ", end="")
+            for token in struct:
+                print(token.value, end="")
+            print()
+
+
+class VerilogGrouper(Grouper):
+    TAG_STATEMENT = 1
+    TAG_BLOCK = 2
+    TAG_MODULEDECLARATION = 3
+
+    TAG_ASSIGNS = 1
+    TAG_WIREDECS = 2
+    TAG_REGDECS = 3
+
+    collect = 2
+    must = 1
+    can = 0
+    _assign = [
+        # Tag, subtag, must/can, error if true
+        #   mandatory keyword assign
+        (TAG_KEYWORD, KEYWORD_ASSIGN, must, None),
+        #   mandatory whitespace
+        (TAG_WHITESPACE, None, must, None),
+        #   mandatory signal name
+        (TAG_GENERIC, None, must, None),
+        #   optional whitespace
+        (TAG_WHITESPACE, None, can, None),
+        #   mandatory reserved '='
+        (TAG_RESERVED, RESERVED_EQUAL, must, None),
+        #   collect until reserved ';'
+        #       Error on any keywords
+        (TAG_RESERVED, RESERVED_SEMICOLON, collect, lambda t: _tag(t) == TAG_KEYWORD),
+    ]
+
+    _assign_with_range = [
+        # Tag, subtag, must/can, error if true
+        #   mandatory keyword assign
+        (TAG_KEYWORD, KEYWORD_ASSIGN, must, None),
+        #   mandatory whitespace
+        (TAG_WHITESPACE, None, must, None),
+        #   mandatory signal name
+        (TAG_GENERIC, None, must, None),
+        #   optional whitespace
+        (TAG_WHITESPACE, None, can, None),
+        #   mandatory reserved '['
+        (TAG_RESERVED, RESERVED_BRACKET_OPEN, must, None),
+        #   collect until reserved ']'; error on non-generics
+        (TAG_RESERVED, RESERVED_BRACKET_CLOSE, collect, lambda t: _tag(t) != TAG_GENERIC),
+        #   optional whitespace
+        (TAG_WHITESPACE, None, can, None),
+        #   mandatory reserved '='
+        (TAG_RESERVED, RESERVED_EQUAL, must, None),
+        #   collect until reserved ';'
+        #       Error on any keywords
+        (TAG_RESERVED, RESERVED_SEMICOLON, collect, lambda t: _tag(t) == TAG_KEYWORD),
+    ]
+
+    _wiredec = [
+        # Tag, subtag, must/can, error if true
+        #   mandatory keyword wire
+        (TAG_KEYWORD, KEYWORD_WIRE, must, None),
+        #   mandatory whitespace
+        (TAG_WHITESPACE, None, must, None),
+        #   mandatory signal name
+        (TAG_GENERIC, None, must, None),
+        #   collect until reserved ';'
+        #       Error on any keywords
+        (TAG_RESERVED, RESERVED_SEMICOLON, collect, lambda t: _tag(t) == TAG_KEYWORD),
+    ]
+
+    _wiredec_with_range = [
+        # Tag, subtag, must/can, error if true
+        #   mandatory keyword wire
+        (TAG_KEYWORD, KEYWORD_WIRE, must, None),
+        #   mandatory whitespace
+        (TAG_WHITESPACE, None, must, None),
+        #   mandatory reserved '['
+        (TAG_RESERVED, RESERVED_BRACKET_OPEN, must, None),
+        #   collect until reserved ']'; error on non-generics
+        (TAG_RESERVED, RESERVED_BRACKET_CLOSE, collect, lambda t: _tag(t) != TAG_GENERIC),
+        #   optional whitespace
+        (TAG_WHITESPACE, None, can, None),
+        #   mandatory signal name
+        (TAG_GENERIC, None, must, None),
+        #   collect until reserved ';'
+        #       Error on any keywords
+        (TAG_RESERVED, RESERVED_SEMICOLON, collect, lambda t: _tag(t) == TAG_KEYWORD),
+    ]
+
+    _regdec = [
+        # Tag, subtag, must/can, error if true
+        #   mandatory keyword reg
+        (TAG_KEYWORD, KEYWORD_REG, must, None),
+        #   mandatory whitespace
+        (TAG_WHITESPACE, None, must, None),
+        #   mandatory signal name
+        (TAG_GENERIC, None, must, None),
+        #   collect until reserved ';'
+        #       Error on any keywords
+        (TAG_RESERVED, RESERVED_SEMICOLON, collect, lambda t: _tag(t) == TAG_KEYWORD),
+    ]
+
+    _regdec_with_range = [
+        # Tag, subtag, must/can, error if true
+        #   mandatory keyword reg
+        (TAG_KEYWORD, KEYWORD_REG, must, None),
+        #   mandatory whitespace
+        (TAG_WHITESPACE, None, must, None),
+        #   mandatory reserved '['
+        (TAG_RESERVED, RESERVED_BRACKET_OPEN, must, None),
+        #   collect until reserved ']'; error on non-generics
+        (TAG_RESERVED, RESERVED_BRACKET_CLOSE, collect, lambda t: _tag(t) != TAG_GENERIC),
+        #   optional whitespace
+        (TAG_WHITESPACE, None, can, None),
+        #   mandatory signal name
+        (TAG_GENERIC, None, must, None),
+        #   collect until reserved ';'
+        #       Error on any keywords
+        (TAG_RESERVED, RESERVED_SEMICOLON, collect, lambda t: _tag(t) == TAG_KEYWORD),
+    ]
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.addParsers()
+
+    def addParsers(self):
+        tag = (self.TAG_STATEMENT, self.TAG_REGDECS)
+        self.structparsers.append(StructParser("regdecs", self._regdec, tag=tag))
+
+        tag = (self.TAG_STATEMENT, self.TAG_REGDECS)
+        self.structparsers.append(StructParser("regdecs_with_range", self._regdec_with_range, tag=tag))
+
+        tag = (self.TAG_STATEMENT, self.TAG_WIREDECS)
+        self.structparsers.append(StructParser("wiredecs", self._wiredec, tag=tag))
+
+        tag = (self.TAG_STATEMENT, self.TAG_WIREDECS)
+        self.structparsers.append(StructParser("wiredecs_with_range", self._wiredec_with_range, tag=tag))
+
+        tag = (self.TAG_STATEMENT, self.TAG_ASSIGNS)
+        self.structparsers.append(StructParser("assigns", self._assign, tag=tag))
+
+        tag = (self.TAG_STATEMENT, self.TAG_ASSIGNS)
+        self.structparsers.append(StructParser("assigns_with_range", self._assign_with_range, tag=tag))
+
+
+class Tokenizer():
     def __init__(self, quote='"', comment_single="//", comment_multi=("/*", "*/"),
                  keywords={}, reserved={}, macros={}):
         self._quote = quote
@@ -265,7 +536,6 @@ class Parser():
         return
 
     def _tagMatchesAtBoundaries(self, cs, token, keyword, tag):
-        import re
         restr = r"\b" + keyword + r"\b"
         offset = token.start
         _iter = re.finditer(restr, token.value)
@@ -277,7 +547,6 @@ class Parser():
         return
 
     def _tagMatches(self, cs, token, keyword, tag):
-        import re
         restr = keyword
         offset = token.start
         _iter = re.finditer(restr, token.value)
@@ -289,7 +558,6 @@ class Parser():
         return
 
     def _tagWhitespace(self, cs, token, tag):
-        import re
         restr = "\s+"
         offset = token.start
         _iter = re.finditer(restr, token.value)
@@ -371,63 +639,60 @@ class Parser():
             inranges.append((inpoint, len(line)))
         return inranges
 
-    @staticmethod
-    def commentLevel(line, ncomment=0):
-        """
-        Returns (ncomment, codestring, commentstring)
-        'ncomment':
-            +1: the line enters a multi-line comment.
-            -1: the line exits a multi-line comment.
-             0: the line both exits and enters a multi-line comment.
-             0: the line neither enters nor exits a multi-line comment.
-        'codestring' is any portion of the line that is not within a comment (could be empty)
-        'commentstring' is any portion of the line that is within a comment (could be empty)
-        """
-        ml_in = "/*"
-        ml_out = "*/"
-        out_lines = []
-        in_lines = []
-        if ncomment > 0:
-            line_in = line
-            line_out = ""
-        else:
-            line_in = ""
-            line_out = line
-        if (ml_in not in line_out) and (ml_out not in line_in):
-            return (ncomment, line_out, line_in)
-        while (ml_in in line_out) or (ml_out in line_in):
-            # Handle entering comments
-            if ml_in in line_out:
-                line_out, line_in = line_out.split(ml_in, maxsplit=1)
-                out_lines.append(line_out)
-                line_out = ""
-                ncomment += 1
-            # Handle exiting comments
-            if ml_out in line_in:
-                line_in, line_out= line_in.split(ml_out, maxsplit=1)
-                in_lines.append(line_in)
-                line_in = ""
-                ncomment -= 1
-        out_lines.append(line_out)
-        in_lines.append(line_in)
-        return (ncomment, "".join(out_lines), "".join(in_lines))
-
-def testParser(argv):
+def testTokenizer(argv):
     if len(argv) < 2:
         print("Need a string")
         return
-    parser = Parser(reserved=reserved, keywords=keywords, macros=macros)
+    tkzr = Tokenizer(reserved=reserved, keywords=keywords, macros=macros)
     from colorama import Fore, Back, Style
     def printRed(s, end="\n"):
         print(Fore.RED + s + Style.RESET_ALL, end=end)
     # Print tokens as they come
-    cs = parser.parse(argv[1])
+    cs = tkzr.parse(argv[1])
     cs.setActivePerspective("keywords")
     cs.setColorMap(_colormap)
     cs.printColor()
     return
 
+def test_GrouperParseAssign():
+    goods = [
+        "assign foo=bar;",
+        "assign foo = bar;",
+        "assign foo[3:0] = bar[7:4];",
+        "assign my_signal= {4{1'b0},baz};",
+    ]
+    gp = VerilogGrouper(reserved=reserved, keywords=keywords, macros=macros)
+    for s in goods:
+        print("PARSING: {}".format(s))
+        gp.tokenize(s)
+        assigns = gp.parseAssigns()
+        if len(assigns) > 0:
+            gp.printStructs(assigns, "Assigns")
+        else:
+            assigns = gp.parseAssignsWithRange()
+            gp.printStructs(assigns, "Assigns")
+    return
+
 def parseFile():
+    import argparse
+    parser = argparse.ArgumentParser(description="Hand-rolled Verilog parser")
+    parser.set_defaults(handler=lambda args: parser.print_help())
+    parser.add_argument('filename', default=None, help="The Verilog file to parse.")
+    args = parser.parse_args()
+    instr = None
+    with open(args.filename, 'r') as fd:
+        instr = fd.read()
+    if instr is None:
+        print("Failed to parse {}".format(args.filename))
+        return
+    gp = VerilogGrouper(reserved=reserved, keywords=keywords, macros=macros)
+    gp.tokenize(instr)
+    structdict = gp.parseStructure()
+    for name, structs in structdict.items():
+        gp.printStructs(structs, name)
+    return
+
+def tokenizeFile():
     import argparse
     parser = argparse.ArgumentParser(description="Hand-rolled Verilog parser")
     parser.set_defaults(handler=lambda args: parser.print_help())
@@ -440,9 +705,8 @@ def parseFile():
     if instr is None:
         print("Failed to parse {}".format(args.filename))
         return
-    # Cloberring the name 'parser'
-    parser = Parser(reserved=reserved, keywords=keywords, macros=macros)
-    cs = parser.parse(instr)
+    tkzr = Tokenizer(reserved=reserved, keywords=keywords, macros=macros)
+    cs = tkzr.parse(instr)
     cs.setActivePerspective("keywords")
     cs.setColorMap(_colormap)
     cs.printColor()
@@ -450,5 +714,7 @@ def parseFile():
 
 if __name__ == "__main__":
     import sys
-    #testParser(sys.argv)
+    #testTokenizer(sys.argv)
+    #tokenizeFile()
+    #test_GrouperParseAssign()
     parseFile()
