@@ -16,11 +16,56 @@
 #   instead maintain the tagDict as an object attribute and update in the Perspective.tag() method, but that's non-trivial.
 class Perspective():
     TagGeneric = 0
+    COLOR_DEFAULT=0
+    COLOR_RED=1
+    COLOR_BLACK=2
+    COLOR_BLUE=3
+    COLOR_CYAN=4
+    COLOR_GREEN=5
+    COLOR_WHITE=6
+    COLOR_YELLOW=7
+    COLOR_MAGENTA=8
+    COLOR_LIGHTBLACK_EX=9
+    COLOR_LIGHTBLUE_EX=10
+    COLOR_LIGHTCYAN_EX=11
+    COLOR_LIGHTGREEN_EX=12
+    COLOR_LIGHTMAGENTA_EX=13
+    COLOR_LIGHTRED_EX=14
+    COLOR_LIGHTWHITE_EX=15
+    COLOR_LIGHTYELLOW_EX=16
+    _colorama_map = {
+        COLOR_DEFAULT:"WHITE",
+        COLOR_RED:"RED",
+        COLOR_BLACK:"BLACK",
+        COLOR_BLUE:"BLUE",
+        COLOR_CYAN:"CYAN",
+        COLOR_GREEN:"GREEN",
+        COLOR_WHITE:"WHITE",
+        COLOR_YELLOW:"YELLOW",
+        COLOR_MAGENTA:"MAGENTA",
+        COLOR_LIGHTBLACK_EX:"LIGHTBLACK_EX",
+        COLOR_LIGHTBLUE_EX:"LIGHTBLUE_EX",
+        COLOR_LIGHTCYAN_EX:"LIGHTCYAN_EX",
+        COLOR_LIGHTGREEN_EX:"LIGHTGREEN_EX",
+        COLOR_LIGHTMAGENTA_EX:"LIGHTMAGENTA_EX",
+        COLOR_LIGHTRED_EX:"LIGHTRED_EX",
+        COLOR_LIGHTWHITE_EX:"LIGHTWHITE_EX",
+        COLOR_LIGHTYELLOW_EX:"LIGHTYELLOW_EX",
+    }
+
+    @classmethod
+    def printColor(cls, ss, color=COLOR_DEFAULT, end="\n"):
+        from colorama import Fore, Style
+        ccolor = getattr(Fore, cls._colorama_map.get(color))
+        print(ccolor + ss + Style.RESET_ALL, end=end)
+        return
+
     def __init__(self, stop, start=0, tagmap=[]):
         self.stop = stop
         self.start = start
         #self._tagDict = {self.TagGeneric : [(start, stop)]}
         self._map = [(start, stop, self.TagGeneric)]
+        self._colorMap = {}
         self.applyTags(tagmap)
 
     def __str__(self):
@@ -31,6 +76,17 @@ class Perspective():
 
     def __len__(self):
         return self._map.__len__()
+
+    def setColorMap(self, colormap):
+        for tag, color in colormap.items():
+            if color <= self.COLOR_LIGHTYELLOW_EX:
+                self._colorMap[tag] = color
+            else:
+                self._colorMap[tag] = self.COLOR_DEFAULT
+        return
+
+    def getColorMap(self):
+        return self._colorMap
 
     def _mkTagDict(self):
         td = {}
@@ -136,6 +192,9 @@ class Perspective():
         td = self._mkTagDict()
         return [x for x in td.keys()]
 
+    def copy(self):
+        return Perspective(self.stop, self.start, self._map)
+
 def test_Perspective_tag():
     # Preloaded tag map
     tagmap = [(50, 55, 123), (95, 100, 123)]
@@ -166,16 +225,52 @@ def test_Perspective_tag():
     return
 
 class ContextualString():
+    TagGeneric = Perspective.TagGeneric
     def __init__(self, s = ""):
         # Each entry of 'tags' is (start, stop, taglist)
-        self.perspectives = {}
         self._value = s
-        # TODO - Set default perspective?
-        self._activePerspective = None
+        _defaultPerspective = Perspective(len(self._value))
+        self.perspectives = {
+            "default": _defaultPerspective
+        }
+        self._activeGetPerspective = _defaultPerspective
+        self._activeSetPerspective = _defaultPerspective
 
     def addPerspective(self, label):
         self.perspectives[label] = Perspective(len(self._value))
-        self._activePerspective = self.perspectives[label]
+        self._activeGetPerspective = self.perspectives[label]
+        self._activeSetPerspective = self.perspectives[label]
+        return
+
+    def copyPerspective(self, labelFrom, labelTo):
+        psp = self.perspectives[labelFrom]
+        self.perspectives[labelTo] = psp.copy()
+        self._activeGetPerspective = psp
+        self._activeSetPerspective = self.perspectives[labelTo]
+        return
+
+    def getPerspectives(self):
+        return [x for x in self.perspectives.keys()]
+
+    def setColorMap(self, colormap={}, perspective=None):
+        if perspective is None:
+            self._activeGetPerspective.setColorMap(colormap)
+        else:
+            psp = self.perspectives[perspective]
+            psp.setColorMap(colormap)
+        return
+
+    def printColor(self):
+        colorMap = self._activeGetPerspective.getColorMap()
+        for token in self:
+            tag = token.tag
+            value = token.value
+            color = colorMap.get(tag, None)
+            if (color is None) or (color == self._activeGetPerspective.COLOR_DEFAULT):
+                print(value, end="")
+            else:
+                self._activeGetPerspective.printColor(value, color, end="")
+        print()
         return
 
     def __repr__(self):
@@ -202,6 +297,24 @@ class ContextualString():
                 result += self
         return result
 
+    def tagToken(self, nToken, index, tag):
+        """'index' can be int or slice()"""
+        _map = self._activeSetPerspective._map
+        if nToken >= len(_map):
+            raise Exception("Token number {} out of range: [0,{}]".format(nToken, len(_map)-1))
+        _start, _stop, _label = _map[nToken]
+        if hasattr(index, "start"):
+            start = index.start
+            stop = index.stop
+        else:
+            start = index
+            stop = index
+        # index into token's range
+        start += _start
+        stop += _start
+        sl = slice(start, stop)
+        return self.tag(sl, tag)
+
     def tag(self, index, tag):
         """'index' can be int or slice()"""
         if hasattr(index, "start"):
@@ -210,13 +323,30 @@ class ContextualString():
         else:
             start = index
             stop = index
-        self._activePerspective.tag(start, stop, tag)
+        self._activeSetPerspective.tag(start, stop, tag)
         return
 
     def setActivePerspective(self, label):
         psp = self.perspectives.get(label, None)
         if psp is not None:
-            self._activePerspective = psp
+            self._activeSetPerspective = psp
+            self._activeGetPerspective = psp
+        else:
+            raise Exception(f"Invalid perspective label: {label}")
+        return
+
+    def setActiveSetPerspective(self, label):
+        psp = self.perspectives.get(label, None)
+        if psp is not None:
+            self._activeSetPerspective = psp
+        else:
+            raise Exception(f"Invalid perspective label: {label}")
+        return
+
+    def setActiveGetPerspective(self, label):
+        psp = self.perspectives.get(label, None)
+        if psp is not None:
+            self._activeGetPerspective = psp
         else:
             raise Exception(f"Invalid perspective label: {label}")
         return
@@ -227,11 +357,11 @@ class ContextualString():
         return self
 
     def __next__(self):
-        _map = self._activePerspective._map
+        _map = self._activeGetPerspective._map
         if self._ntoken < len(_map):
             start, stop, label = _map[self._ntoken]
             self._ntoken += 1
-            return (label, self._value[start:stop])
+            return StringToken(self._value[start:stop], label, start, stop)
         else:
             raise StopIteration
 
@@ -240,7 +370,14 @@ class ConStr(ContextualString):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-def testConStr2():
+class StringToken():
+    def __init__(self, value, tag, start, stop):
+        self.value = value
+        self.tag = tag
+        self.start = start
+        self.stop = stop
+
+def testConStr():
     sa = ConStr("String A")
     sb = ConStr("Item B")
     print(f"sa = {sa}")
@@ -273,10 +410,6 @@ def testColorama():
     print(". But does it work?")
     return
 
-def testConStr():
-    sa = ConStr("String A")
-    return
-
 def testHighlighter(argv):
     if len(argv) < 2:
         print("Need a string")
@@ -298,7 +431,8 @@ def testHighlighter(argv):
         print(Fore.RED + s + Style.RESET_ALL, end=end)
     # Print tokens as they come
     for token in cs:
-        tag, value = token
+        tag = token.tag
+        value = token.value
         if tag == TAG_KEYWORD:
             printRed(value, end="")
         else:
