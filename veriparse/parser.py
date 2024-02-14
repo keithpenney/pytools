@@ -6,7 +6,7 @@ import re
 from constr import ConStr, Perspective
 
 # TODO:
-#   * Add Grouper option for collecting from an opening grouping symbol (i.e. '[') to its mating closing grouping symbol (i.e. ']')
+#   CHECK * Add Grouper option for collecting from an opening grouping symbol (i.e. '[') to its mating closing grouping symbol (i.e. ']')
 #   * Create a new Perspective at the level of a "structure" where each entry will be one of: TAG_STATEMENT, TAG_BLOCK, TAG_MODULEDECLARATION
 #       Start with "comments" Perspective and tag based on the limits of the structResults
 
@@ -45,6 +45,12 @@ RESERVED_COMMA = 13
 RESERVED_POUNDPAREN_OPEN = 14
 RESERVED_SEMICOLON = 15
 RESERVED_COLON = 16
+
+_grouping_pairs = {
+    RESERVED_PAREN_OPEN: RESERVED_PAREN_CLOSE,
+    RESERVED_BRACE_OPEN: RESERVED_BRACE_CLOSE,
+    RESERVED_BRACKET_OPEN: RESERVED_BRACKET_CLOSE,
+}
 
 MACRO_DEFINE = 0
 MACRO_IFDEF = 1
@@ -172,6 +178,7 @@ class StructureDefinition():
         pass
 
 class StructParser():
+    complete = 3
     collect = 2
     must = 1
     can = 0
@@ -186,6 +193,7 @@ class StructParser():
         self.struct = []
         self.npart = 0
         self.retry = False
+        self.groupLevel = 0
 
     def doParse(self, token, retrying, verbose=False):
         # 'retry' = True means try this same token again
@@ -197,9 +205,14 @@ class StructParser():
         #print(f"token = {token}")
         tgt_tag, tgt_subtag, do, ef = self._structdef[self.npart]
         hit = tgt_tag == tag
+        if do == self.complete:
+            closing_subtag = _grouping_pairs.get(tgt_subtag)
+            hit_close = (tgt_tag == tag) and (closing_subtag == subtag)
+        else:
+            hit_close = False
         if ef is not None:
-            if (not hit) and ef(token):
-                raise SyntaxError(f"Syntax error parsing structment on token: {token}")
+            if (not hit) and (not hit_close) and ef(token):
+                raise SyntaxError(f"Syntax error parsing token: {token}")
         if tgt_subtag is not None:
             hit = hit and (tgt_subtag == subtag)
         if (do == self.can):
@@ -223,6 +236,18 @@ class StructParser():
                 print(f"[{self.npart}] Collecting token: {token}")
             self.struct.append(token)
             if hit:
+                self.npart += 1
+        elif do == self.complete:
+            if hit:
+                if verbose:
+                    print(f"Complete hit open on {token}")
+                self.groupLevel += 1
+            elif hit_close:
+                if verbose:
+                    print(f"Complete hit close on {token}")
+                self.groupLevel -= 1
+            self.struct.append(token)
+            if self.groupLevel == 0:
                 self.npart += 1
         else:
             if verbose:
@@ -266,8 +291,15 @@ class Grouper():
             retry = False
             for sp in self.structparsers:
                 verbose = False
-                if sp.doParse(token, retrying, verbose):
-                    retry = True
+                err = None
+                try:
+                    if sp.doParse(token, retrying, verbose):
+                        retry = True
+                except SyntaxError as se:
+                    err = str(se)
+                if err is not None:
+                    nline, nchar = self.cs.charToLineChar(token.start)
+                    raise SyntaxError("[line {}: char {}] ".format(nline, nchar) + err)
         structResults = {}
         for sp in self.structparsers:
             structResults[sp.name] = sp.get()
@@ -292,6 +324,7 @@ class VerilogGrouper(Grouper):
     TAG_WIREDECS = 2
     TAG_REGDECS = 3
 
+    complete = 3
     collect = 2
     must = 1
     can = 0
@@ -322,10 +355,8 @@ class VerilogGrouper(Grouper):
         (TAG_GENERIC, None, must, None),
         #   optional whitespace
         (TAG_WHITESPACE, None, can, None),
-        #   mandatory reserved '['
-        (TAG_RESERVED, RESERVED_BRACKET_OPEN, must, None),
-        #   collect until reserved ']'; error on non-generics
-        (TAG_RESERVED, RESERVED_BRACKET_CLOSE, collect, lambda t: _tag(t) != TAG_GENERIC),
+        #   complete open reserved '[' with its mating close reserved ']'
+        (TAG_RESERVED, RESERVED_BRACKET_OPEN, complete, lambda t: _tag(t) != TAG_GENERIC),
         #   optional whitespace
         (TAG_WHITESPACE, None, can, None),
         #   mandatory reserved '='
@@ -354,10 +385,8 @@ class VerilogGrouper(Grouper):
         (TAG_KEYWORD, KEYWORD_WIRE, must, None),
         #   mandatory whitespace
         (TAG_WHITESPACE, None, must, None),
-        #   mandatory reserved '['
-        (TAG_RESERVED, RESERVED_BRACKET_OPEN, must, None),
-        #   collect until reserved ']'; error on non-generics
-        (TAG_RESERVED, RESERVED_BRACKET_CLOSE, collect, lambda t: _tag(t) != TAG_GENERIC),
+        #   complete open reserved '[' with its mating close reserved ']'
+        (TAG_RESERVED, RESERVED_BRACKET_OPEN, complete, lambda t: _tag(t) != TAG_GENERIC),
         #   optional whitespace
         (TAG_WHITESPACE, None, can, None),
         #   mandatory signal name
@@ -386,10 +415,8 @@ class VerilogGrouper(Grouper):
         (TAG_KEYWORD, KEYWORD_REG, must, None),
         #   mandatory whitespace
         (TAG_WHITESPACE, None, must, None),
-        #   mandatory reserved '['
-        (TAG_RESERVED, RESERVED_BRACKET_OPEN, must, None),
-        #   collect until reserved ']'; error on non-generics
-        (TAG_RESERVED, RESERVED_BRACKET_CLOSE, collect, lambda t: _tag(t) != TAG_GENERIC),
+        #   complete open reserved '[' with its mating close reserved ']'
+        (TAG_RESERVED, RESERVED_BRACKET_OPEN, complete, lambda t: _tag(t) != TAG_GENERIC),
         #   optional whitespace
         (TAG_WHITESPACE, None, can, None),
         #   mandatory signal name
@@ -398,6 +425,7 @@ class VerilogGrouper(Grouper):
         #       Error on any keywords
         (TAG_RESERVED, RESERVED_SEMICOLON, collect, lambda t: _tag(t) == TAG_KEYWORD),
     ]
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.addParsers()

@@ -10,6 +10,7 @@
 #   And finally, let's see if we can enforce this rule:
 #     Each tag can only exist in one Perspective (i.e. 1-to-1 mapping of perspective and tag type)
 
+import re
 import colorama
 
 # TODO:
@@ -228,6 +229,7 @@ def test_Perspective_tag():
 
 class ContextualString():
     TagGeneric = Perspective.TagGeneric
+    TagNewline = 12345
     def __init__(self, s = ""):
         # Each entry of 'tags' is (start, stop, taglist)
         self._value = s
@@ -237,6 +239,25 @@ class ContextualString():
         }
         self._activeGetPerspective = _defaultPerspective
         self._activeSetPerspective = _defaultPerspective
+        self.parseLines()
+
+    def parseLines(self):
+        self.copyPerspective("default", "lines")
+        self._tagMatches(0, "\n", self.TagNewline)
+        self.setActivePerspective("default")
+        return
+
+    def _tagMatches(self, offset, keyword, tag):
+        restr = keyword
+        _iter = re.finditer(restr, self._value)
+        nmatches = 0
+        for _match in _iter:
+            #print(f"matched with {keyword}")
+            start, stop = _match.span()
+            sl = slice(offset+start, offset+stop)
+            self.tag(sl, tag)
+            nmatches += 1
+        return nmatches
 
     def addPerspective(self, label):
         self.perspectives[label] = Perspective(len(self._value))
@@ -366,6 +387,16 @@ class ContextualString():
             return StringToken(self._value[start:stop], label, start, stop)
         else:
             raise StopIteration
+
+    def charToLineChar(self, nchar):
+        self.setActiveGetPerspective("lines")
+        nline = 1
+        for token in iter(self):
+            if token.tag == self.TagNewline:
+                nline += 1
+            if (nchar >= token.start) and (nchar < token.stop):
+                return (nline, nchar-token.start)
+        return (nline, nchar-token.start)
 
 # Alias
 class ConStr(ContextualString):
