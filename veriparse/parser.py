@@ -3,19 +3,44 @@
 # A just-for-fun test of a generic parsing concept
 
 import re
-from constr import ConStr, Perspective
+from constr import ConStr, Perspective, _tag, _subtag
 
-def _tag(t):
-    if isinstance(t.tag, tuple) or isinstance(t.tag, list):
-        return t.tag[0]
-    else:
-        return t.tag
-
-def _subtag(t):
-    if isinstance(t.tag, tuple) or isinstance(t.tag, list):
-        return t.tag[1]
-    else:
-        return None
+# ===================== Demo Keywords/Reserved/Tags ===================
+TAG_GENERIC = 0
+TAG_COMMENT = 1
+TAG_STRING  = 2
+TAG_KEYWORD = 3
+TAG_RESERVED= 4
+_colormap = {
+    TAG_COMMENT: Perspective.COLOR_LIGHTCYAN_EX,
+    TAG_STRING: Perspective.COLOR_RED,
+    TAG_KEYWORD: Perspective.COLOR_GREEN,
+    TAG_RESERVED: Perspective.COLOR_BLUE,
+}
+KEYWORD_AND = 4
+KEYWORD_OR = 5
+KEYWORD_NOT = 6
+keywords = {
+    KEYWORD_AND: "and",
+    KEYWORD_OR: "or",
+    KEYWORD_NOT: "not",
+}
+RESERVED_PLUS = 7
+RESERVED_MINUS = 8
+RESERVED_PAREN_OPEN = 9
+RESERVED_PAREN_CLOSE = 10
+RESERVED_MUL = 11
+RESERVED_DIV = 12
+reserved = {
+    RESERVED_PLUS: ("+", "\+"),
+    RESERVED_MINUS: ("-", "\-"),
+    RESERVED_MUL: ("*", "\*"),
+    RESERVED_DIV: ("/", "\/"),
+    RESERVED_PAREN_OPEN: ("(", "\("),
+    RESERVED_PAREN_CLOSE: (")", "\)"),
+}
+macros = {
+}
 
 class StructureDefinition():
     """TODO"""
@@ -26,10 +51,11 @@ class StructureDefinition():
         pass
 
 class StructParser():
-    complete = 3
-    collect = 2
-    must = 1
     can = 0
+    must = 1
+    collect = 2
+    collect_drop = 3
+    complete = 4
     def __init__(self, name, structdef, tag=None):
         self.name = name
         self._structdef = structdef
@@ -60,15 +86,19 @@ class StructParser():
             hit_close = False
         if ef is not None:
             if (not hit) and (not hit_close) and ef(token):
-                raise SyntaxError(f"Syntax error parsing token: {token}")
+                raise SyntaxError(f"({self.name}) Syntax error parsing token: {token}")
         if tgt_subtag is not None:
-            hit = hit and (tgt_subtag == subtag)
+            if hasattr(tgt_subtag, '__len__'):
+                hit = hit and (subtag in tgt_subtag)
+            else:
+                hit = hit and (subtag == tgt_subtag)
         if (do == self.can):
             if not hit:
-                # This token must match the next rule
                 if verbose:
                     print(f"[{self.npart}] Pass on optional: {token}")
-                self.retry = True
+                if self.npart < len(self._structdef)-1:
+                    # This token must match the next rule
+                    self.retry = True
             else:
                 if verbose:
                     print(f"[{self.npart}] Hit on token: {token}")
@@ -85,6 +115,15 @@ class StructParser():
             self.struct.append(token)
             if hit:
                 self.npart += 1
+        elif do == self.collect_drop:
+            if hit:
+                if verbose:
+                    print(f"[{self.npart}] Dropping hit token: {token}")
+                self.npart += 1
+            else:
+                if verbose:
+                    print(f"[{self.npart}] Collecting token: {token}")
+                self.struct.append(token)
         elif do == self.complete:
             if hit:
                 if verbose:
@@ -99,19 +138,24 @@ class StructParser():
                 self.npart += 1
         else:
             if verbose:
-                print(f"[{self.npart}] Reset; not the target structure")
+                if self.npart > 0:
+                    print(f"[{self.npart}] Reset; not the target structure")
             self.npart = 0
             self.struct = []
         if self.npart == len(self._structdef):
-            if verbose:
-                print(f"Assign completed")
             self.structs.append(self.struct)
+            if verbose:
+                print("Parse {} completed: ".format(len(self.structs)), end="")
+                for token in self.struct:
+                    print(token.value, end="")
+                print()
             self.struct = []
             self.npart = 0
         return self.retry
 
     def get(self):
-        self.structs.append(self.struct)
+        if len(self.struct) > 0:
+            self.structs.append(self.struct)
         return self.structs
 
 class Grouper():
@@ -119,6 +163,7 @@ class Grouper():
         self.structparsers = []
         self.tk = Tokenizer(*args, **kwargs)
         self._grouping_pairs = self.tk._grouping_pairs
+        self._verboseParsers = []
 
     def tokenize(self, s):
         self.cs = self.tk.parse(s)
@@ -141,8 +186,8 @@ class Grouper():
             for sp in self.structparsers:
                 verbose = False
                 err = None
-                if sp.name == "regdecs_with_range":
-                    verbose = False
+                if sp.name in self._verboseParsers:
+                    verbose = True
                 try:
                     if sp.doParse(token, retrying, self._grouping_pairs, verbose):
                         retry = True
@@ -153,9 +198,10 @@ class Grouper():
                     raise SyntaxError("[line {}: char {}] ".format(nline, nchar) + err)
         structResults = {}
         for sp in self.structparsers:
-            structResults[sp.name] = sp.get()
+            structResults[sp.name] = (sp.tag, sp.get())
         return structResults
 
+    @staticmethod
     def printStructs(self, structs, label=""):
         print(f"=== {label} ===")
         for n in range(len(structs)):
@@ -164,6 +210,18 @@ class Grouper():
             for token in struct:
                 print(token.value, end="")
             print()
+
+    @staticmethod
+    def printStructDict(structDict):
+        for name, (tag, structs) in structdict.items():
+            print(f"name = {name}, tag = {tag}")
+            for struct in structs:
+                print("  ", end="")
+                for token in struct:
+                    print(token.value, end="")
+                print()
+        return
+
 
 class TagMap():
     comments = None
@@ -176,6 +234,22 @@ class TagMap():
         for kw, val in kwargs.items():
             if hasattr(self, kw):
                 setattr(self, kw, val)
+
+    def __str__(self):
+        ss = [
+            "TagMap(",
+            f"  comments = {self.comments}",
+            f"  macros = {self.macros}",
+            f"  strings = {self.strings}",
+            f"  whitespace = {self.whitespace}",
+            f"  reserved = {self.reserved}",
+            f"  keywords = {self.keywords}",
+            ")",
+        ]
+        return "\n".join(ss)
+
+    def __repr__(self):
+        return self.__str__()
 
 class Tokenizer():
     def __init__(self, quote='"', comment_single="//", comment_multi=("/*", "*/"),
@@ -215,12 +289,14 @@ class Tokenizer():
         cs = ConStr(string)
         cs.addPerspective("top")
         tm = self._tagmap
+        #print(f"tagmap = {tm}")
         self.tagComments(cs, tm.comments)
         self.tagMacros(cs, tm.macros)
         self.tagStrings(cs, tm.strings)
         self.tagWhitespace(cs, tm.whitespace)
         self.tagReserved(cs, tm.reserved)
         self.tagKeywords(cs, tm.keywords)
+        cs.setActivePerspective("keywords")
         return cs
 
     def tagComments(self, cs, tag):
@@ -232,7 +308,7 @@ class Tokenizer():
             cs.tag(sl, tag)
 
         # Then multi-line comments
-        cs.copyPerspective("top", "comments1")
+        cs.copyPerspective("top", "comments")
         instr, outstr = self._comment_multi
         for token in iter(cs):
             _tag = token.tag
@@ -246,7 +322,7 @@ class Tokenizer():
         return len(inranges)
 
     def tagMacros(self, cs, tag):
-        cs.copyPerspective("comments1", "macros")
+        cs.copyPerspective("comments", "macros")
         for token in iter(cs):
             _tag = token.tag
             if _tag == cs.TagGeneric:
@@ -262,11 +338,14 @@ class Tokenizer():
 
     def tagStrings(self, cs, tag):
         cs.copyPerspective("macros", "strings")
-        inranges = self._rangesByString(str(cs), instr=self._quote, outstr=self._quote, respect_quotes=False,
-                                        respect_parens=False, allow_escape=True, max_splits=0, start_in=False)
-        for start, stop in inranges:
-            sl = slice(start, stop)
-            cs.tag(sl, tag)
+        for token in iter(cs):
+            _tag = token.tag
+            if _tag == cs.TagGeneric:
+                inranges = self._rangesByString(token.value, instr=self._quote, outstr=self._quote, respect_quotes=False,
+                                                respect_parens=False, allow_escape=True, max_splits=0, start_in=False, verbose=False)
+                for start, stop in inranges:
+                    sl = slice(token.start+start, token.start+stop)
+                    cs.tag(sl, tag)
         return len(inranges)
 
     def tagWhitespace(self, cs, tag):
@@ -399,7 +478,8 @@ class Tokenizer():
             elif isin:
                 if "".join(chars[-ol:]) == outstr:
                     if verbose:
-                        print("outstr matched at {}".format(n))
+                        print("outstr matched at {}: outstr = {}; chars[-{}:] = {}".format(
+                            n, outstr, ol, chars[-ol:]))
                     if not instring and not escaped and plevel == 0:
                         inranges.append((inpoint, n + 1))
                         inpoint = None
@@ -410,7 +490,8 @@ class Tokenizer():
             else:
                 if "".join(chars[-il:]) == instr:
                     if verbose:
-                        print("instr matched at {}".format(n))
+                        print("instr matched at {}: outstr = {}; chars[-{}:] = {}".format(
+                            n, instr, il, chars[-il:]))
                     if not instring and not escaped and plevel == 0:
                         inpoint = n - il + 1
                         isin = True
@@ -419,17 +500,22 @@ class Tokenizer():
             inranges.append((inpoint, len(line)))
         return inranges
 
+tagmap = TagMap(
+    comments=TAG_COMMENT,
+    macros=None,
+    strings=TAG_STRING,
+    whitespace=None,
+    reserved=TAG_RESERVED,
+    keywords=TAG_KEYWORD,
+)
+
 def testTokenizer(argv):
     if len(argv) < 2:
         print("Need a string")
         return
-    tkzr = Tokenizer(reserved=reserved, keywords=keywords, macros=macros)
-    from colorama import Fore, Back, Style
-    def printRed(s, end="\n"):
-        print(Fore.RED + s + Style.RESET_ALL, end=end)
+    tkzr = Tokenizer(reserved=reserved, keywords=keywords, macros=macros, tagmap=tagmap)
     # Print tokens as they come
     cs = tkzr.parse(argv[1])
-    cs.setActivePerspective("keywords")
     cs.setColorMap(_colormap)
     cs.printColor()
     return
@@ -447,16 +533,13 @@ def tokenizeFile():
     if instr is None:
         print("Failed to parse {}".format(args.filename))
         return
-    tkzr = Tokenizer(reserved=reserved, keywords=keywords, macros=macros)
+    tkzr = Tokenizer(reserved=reserved, keywords=keywords, macros=macros, tagmap=tagmap)
     cs = tkzr.parse(instr)
-    cs.setActivePerspective("keywords")
     cs.setColorMap(_colormap)
     cs.printColor()
     return
 
 if __name__ == "__main__":
     import sys
-    #testTokenizer(sys.argv)
+    testTokenizer(sys.argv)
     #tokenizeFile()
-    #test_GrouperParseAssign()
-    parseFile()

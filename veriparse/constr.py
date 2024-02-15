@@ -13,6 +13,18 @@
 import re
 import colorama
 
+def _tag(t):
+    if isinstance(t.tag, tuple) or isinstance(t.tag, list):
+        return t.tag[0]
+    else:
+        return t.tag
+
+def _subtag(t):
+    if isinstance(t.tag, tuple) or isinstance(t.tag, list):
+        return t.tag[1]
+    else:
+        return None
+
 # TODO:
 #   I'm currently dynamically building the tagDict when needed.  If it turns out to be a critical resource, we can
 #   instead maintain the tagDict as an object attribute and update in the Perspective.tag() method, but that's non-trivial.
@@ -61,12 +73,13 @@ class Perspective():
         print(ccolor + ss + colorama.Style.RESET_ALL, end=end)
         return
 
-    def __init__(self, stop, start=0, tagmap=[]):
+    def __init__(self, stop, start=0, tagmap=[], label=None):
         self.stop = stop
         self.start = start
         #self._tagDict = {self.TagGeneric : [(start, stop)]}
         self._map = [(start, stop, self.TagGeneric)]
         self._colorMap = {}
+        self.label = label
         self.applyTags(tagmap)
 
     def __str__(self):
@@ -260,16 +273,18 @@ class ContextualString():
         return nmatches
 
     def addPerspective(self, label):
-        self.perspectives[label] = Perspective(len(self._value))
+        self.perspectives[label] = Perspective(len(self._value), label=label)
         self._activeGetPerspective = self.perspectives[label]
         self._activeSetPerspective = self.perspectives[label]
         return
 
     def copyPerspective(self, labelFrom, labelTo):
-        psp = self.perspectives[labelFrom]
-        self.perspectives[labelTo] = psp.copy()
-        self._activeGetPerspective = psp
-        self._activeSetPerspective = self.perspectives[labelTo]
+        pspfrom = self.perspectives[labelFrom]
+        pspto = pspfrom.copy()
+        pspto.label = labelTo
+        self.perspectives[labelTo] = pspto
+        self._activeGetPerspective = pspfrom
+        self._activeSetPerspective = pspto
         return
 
     def getPerspectives(self):
@@ -286,9 +301,11 @@ class ContextualString():
     def printColor(self):
         colorMap = self._activeGetPerspective.getColorMap()
         for token in self:
-            tag = token.tag
+            tag = _tag(token)
             value = token.value
-            color = colorMap.get(tag, None)
+            color = colorMap.get(token.tag, None)
+            if color is None:
+                color = colorMap.get(tag, None)
             if (color is None) or (color == self._activeGetPerspective.COLOR_DEFAULT):
                 print(value, end="")
             else:
@@ -338,7 +355,7 @@ class ContextualString():
         sl = slice(start, stop)
         return self.tag(sl, tag)
 
-    def tag(self, index, tag):
+    def tag(self, index, tag, verbose=False):
         """'index' can be int or slice()"""
         if hasattr(index, "start"):
             start = index.start
@@ -346,7 +363,7 @@ class ContextualString():
         else:
             start = index
             stop = index
-        self._activeSetPerspective.tag(start, stop, tag)
+        self._activeSetPerspective.tag(start, stop, tag, verbose=verbose)
         return
 
     def setActivePerspective(self, label):
@@ -425,19 +442,6 @@ def testConStr():
     print(f"ConStr('.').join([sa, sb]) = {ConStr('.').join([sa, sb])}")
     print(f"sa[2] = {sa[2]}")
     print(f"sa[2:5] = {sa[2:5]}")
-    return
-
-def testCurses():
-    print("Testing curses")
-    import curses
-    from curses import wrapper
-    def foo(stdscr):
-        #curses.init_pair(1, curses.COLOR_RED, curses.COLOR_WHITE)
-        print("Curses?  What's up?")
-        stdscr.addstr("Hello curses", curses.color_pair(1))
-        stdscr.refresh()
-        return
-    wrapper(foo)
     return
 
 def testColorama():
