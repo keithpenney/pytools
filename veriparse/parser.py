@@ -51,11 +51,12 @@ class StructureDefinition():
         pass
 
 class StructParser():
-    can = 0
-    must = 1
-    collect = 2
-    collect_drop = 3
-    complete = 4
+    can = 0             # Optional
+    must = 1            # Mandatory
+    collect = 2         # Collect until match, including the match
+    collect_drop = 3    # Collect until match, dropping the match
+    complete = 4        # Get opening grouper, collect until matching closing grouper
+
     def __init__(self, name, structdef, tag=None):
         self.name = name
         self._structdef = structdef
@@ -159,6 +160,12 @@ class StructParser():
         return self.structs
 
 class Grouper():
+    can = StructParser.can
+    must = StructParser.must
+    collect = StructParser.collect
+    collect_drop = StructParser.collect_drop
+    complete = StructParser.complete
+
     def __init__(self, *args, **kwargs):
         self.structparsers = []
         self.tk = Tokenizer(*args, **kwargs)

@@ -1,7 +1,10 @@
 # TODO:
 #   CHECK * Add Grouper option for collecting from an opening grouping symbol (i.e. '[') to its mating closing grouping symbol (i.e. ']')
-#   * Create a new Perspective at the level of a "structure" where each entry will be one of: TAG_STATEMENT, TAG_BLOCK, TAG_MODULEDECLARATION
+#   CHECK * Create a new Perspective at the level of a "structure" where each entry will be one of: TAG_STATEMENT, TAG_BLOCK, TAG_MODULEDECLARATION
 #       Start with "comments" Perspective and tag based on the limits of the structResults
+#   * Add handling of:
+#       * System calls/tasks
+#       * attributes (* foo=bar *)
 
 # Hierarchical Perspectives:
 #   Level 0: comments, whitespace, strings, keywords, reserved chars, macros, generic
@@ -12,59 +15,89 @@
 from parser import Grouper, TagMap, StructParser
 from constr import ConStr, Perspective, _tag, _subtag
 
-KEYWORD_MODULE = 0
-KEYWORD_WIRE = 1
-KEYWORD_REG = 2
-KEYWORD_LOGIC = 3
-KEYWORD_BEGIN = 4
-KEYWORD_ALWAYS = 5
-KEYWORD_INITIAL = 6
-KEYWORD_IF = 7
-KEYWORD_ELSE = 8
-KEYWORD_INPUT = 9
-KEYWORD_OUTPUT = 10
-KEYWORD_INOUT = 11
-KEYWORD_PARAMETER = 12
-KEYWORD_LOCALPARAM = 13
-KEYWORD_FOR = 14
-KEYWORD_END = 15
-KEYWORD_ASSIGN = 16
-KEYWORD_ENDMODULE = 17
+__tags__ = (
+    "TAG_GENERIC",
+    "KEYWORD_MODULE",
+    "KEYWORD_WIRE",
+    "KEYWORD_REG",
+    "KEYWORD_LOGIC",
+    "KEYWORD_BEGIN",
+    "KEYWORD_ALWAYS",
+    "KEYWORD_INITIAL",
+    "KEYWORD_IF",
+    "KEYWORD_ELSE",
+    "KEYWORD_INPUT",
+    "KEYWORD_OUTPUT",
+    "KEYWORD_INOUT",
+    "KEYWORD_PARAMETER",
+    "KEYWORD_LOCALPARAM",
+    "KEYWORD_FOR",
+    "KEYWORD_END",
+    "KEYWORD_ASSIGN",
+    "KEYWORD_ENDMODULE",
 
-RESERVED_EQUAL_DELAYED = 1
-RESERVED_EQUAL = 2
-RESERVED_PLUS = 3
-RESERVED_MINUS = 4
-RESERVED_MUL = 5
-RESERVED_DIV = 6
-RESERVED_PAREN_OPEN = 7
-RESERVED_PAREN_CLOSE = 8
-RESERVED_BRACE_OPEN = 9
-RESERVED_BRACE_CLOSE = 10
-RESERVED_BRACKET_OPEN = 11
-RESERVED_BRACKET_CLOSE = 12
-RESERVED_COMMA = 13
-RESERVED_POUNDPAREN_OPEN = 14
-RESERVED_SEMICOLON = 15
-RESERVED_COLON = 16
+    "RESERVED_EQUAL_DELAYED",
+    "RESERVED_EQUAL",
+    "RESERVED_PLUS",
+    "RESERVED_MINUS",
+    "RESERVED_MUL",
+    "RESERVED_DIV",
+    "RESERVED_PAREN_OPEN",
+    "RESERVED_PAREN_CLOSE",
+    "RESERVED_BRACE_OPEN",
+    "RESERVED_BRACE_CLOSE",
+    "RESERVED_BRACKET_OPEN",
+    "RESERVED_BRACKET_CLOSE",
+    "RESERVED_COMMA",
+    "RESERVED_POUNDPAREN_OPEN",
+    "RESERVED_SEMICOLON",
+    "RESERVED_COLON",
+
+    "MACRO_DEFINE",
+    "MACRO_IFDEF",
+    "MACRO_ENDIF",
+
+    "TAG_KEYWORD",
+    "TAG_COMMENT",
+    "TAG_STRING",
+    "TAG_RESERVED",
+    "TAG_WHITESPACE",
+    "TAG_MACRO",
+
+    "TAG_STATEMENT",
+    "TAG_BLOCK",
+    "TAG_MODULEDECLARATION",
+
+    "TAG_ASSIGNS",
+    "TAG_WIREDECS",
+    "TAG_REGDECS",
+    "TAG_PARAMETERS",
+    "TAG_LOCALPARAMS",
+    "TAG_PORTS",
+)
+
+__tag_offset = 0
+
+for n in range(len(__tags__)):
+    tag = __tags__[n]
+    globals()[tag] = __tag_offset + n
+
+def _tagstr(tag):
+    if isinstance(tag, tuple) or isinstance(tag, list):
+        tag, subtag = tag
+        stag = "None" if tag is None else __tags__[tag-__tag_offset]
+        ssubtag = "None" if subtag is None else __tags__[subtag-__tag_offset]
+        return "({}, {})".format(stag, ssubtag)
+    else:
+        if tag is None:
+            return "None"
+        return __tags__[tag-__tag_offset]
 
 _grouping_pairs = {
     RESERVED_PAREN_OPEN: RESERVED_PAREN_CLOSE,
     RESERVED_BRACE_OPEN: RESERVED_BRACE_CLOSE,
     RESERVED_BRACKET_OPEN: RESERVED_BRACKET_CLOSE,
 }
-
-MACRO_DEFINE = 0
-MACRO_IFDEF = 1
-MACRO_ENDIF = 2
-
-TAG_GENERIC = ConStr.TagGeneric
-TAG_KEYWORD = 1
-TAG_COMMENT = 2
-TAG_STRING = 3
-TAG_RESERVED = 4
-TAG_WHITESPACE = 5
-TAG_MACRO = 6
 
 _colormap = {
     TAG_COMMENT: Perspective.COLOR_LIGHTCYAN_EX,
@@ -130,21 +163,39 @@ COMMENT_MULTI_LINE_CLOSE = "*/"
 
 
 class VerilogGrouper(Grouper):
-    TAG_STATEMENT = 1
-    TAG_BLOCK = 2
-    TAG_MODULEDECLARATION = 3
+    can = StructParser.can
+    must = StructParser.must
+    collect = StructParser.collect
+    collect_drop = StructParser.collect_drop
+    complete = StructParser.complete
 
-    TAG_ASSIGNS = 1
-    TAG_WIREDECS = 2
-    TAG_REGDECS = 3
-    TAG_PARAMETERS = 4
-    TAG_LOCALPARAMS = 5
+    _port = [
+        #   mandatory keyword input/output/inout
+        (TAG_KEYWORD, (KEYWORD_INPUT, KEYWORD_OUTPUT, KEYWORD_INOUT), must, None),
+        #   mandatory whitespace
+        (TAG_WHITESPACE, None, must, None),
+        #   mandatory signal name
+        (TAG_GENERIC, None, must, None),
+        #   collect until reserved ';',',',')'
+        #       Error on any keywords
+        (TAG_RESERVED, (RESERVED_SEMICOLON, RESERVED_COMMA, RESERVED_PAREN_CLOSE), collect_drop, lambda t: _tag(t) == TAG_KEYWORD),
+    ]
 
-    can = 0             # Optional
-    must = 1            # Mandatory
-    collect = 2         # Collect until match, including the match
-    collect_drop = 3    # Collect until match, dropping the match
-    complete = 4        # Get opening grouper, collect until matching closing grouper
+    _port_with_range = [
+        #   mandatory keyword input/output/inout
+        (TAG_KEYWORD, (KEYWORD_INPUT, KEYWORD_OUTPUT, KEYWORD_INOUT), must, None),
+        #   mandatory whitespace
+        (TAG_WHITESPACE, None, must, None),
+        #   complete open reserved '[' with its mating close reserved ']'
+        (TAG_RESERVED, RESERVED_BRACKET_OPEN, complete, lambda t: _tag(t) != TAG_GENERIC),
+        #   optional whitespace
+        (TAG_WHITESPACE, None, can, None),
+        #   mandatory signal name
+        (TAG_GENERIC, None, must, None),
+        #   collect until reserved ';',',',')'
+        #       Error on any keywords
+        (TAG_RESERVED, (RESERVED_SEMICOLON, RESERVED_COMMA, RESERVED_PAREN_CLOSE), collect_drop, lambda t: _tag(t) == TAG_KEYWORD),
+    ]
 
     _assign = [
         # Tag, subtag, must/can, error if true
@@ -184,38 +235,6 @@ class VerilogGrouper(Grouper):
         (TAG_RESERVED, RESERVED_SEMICOLON, collect, lambda t: _tag(t) == TAG_KEYWORD),
     ]
 
-    # OVERLOADED BELOW; DELETE WHEN CONFIDENT
-    _wiredec = [
-        # Tag, subtag, must/can, error if true
-        #   mandatory keyword wire
-        (TAG_KEYWORD, KEYWORD_WIRE, must, None),
-        #   mandatory whitespace
-        (TAG_WHITESPACE, None, must, None),
-        #   mandatory signal name
-        (TAG_GENERIC, None, must, None),
-        #   collect until reserved ';'
-        #       Error on any keywords
-        (TAG_RESERVED, RESERVED_SEMICOLON, collect, lambda t: _tag(t) == TAG_KEYWORD),
-    ]
-
-    # OVERLOADED BELOW; DELETE WHEN CONFIDENT
-    _wiredec_with_range = [
-        # Tag, subtag, must/can, error if true
-        #   mandatory keyword wire
-        (TAG_KEYWORD, KEYWORD_WIRE, must, None),
-        #   mandatory whitespace
-        (TAG_WHITESPACE, None, must, None),
-        #   complete open reserved '[' with its mating close reserved ']'
-        (TAG_RESERVED, RESERVED_BRACKET_OPEN, complete, lambda t: _tag(t) != TAG_GENERIC),
-        #   optional whitespace
-        (TAG_WHITESPACE, None, can, None),
-        #   mandatory signal name
-        (TAG_GENERIC, None, must, None),
-        #   collect until reserved ';'
-        #       Error on any keywords
-        (TAG_RESERVED, RESERVED_SEMICOLON, collect, lambda t: _tag(t) == TAG_KEYWORD),
-    ]
-
     _paramdec = [
         # Tag, subtag, must/can, error if true
         #   mandatory keyword reg
@@ -224,7 +243,7 @@ class VerilogGrouper(Grouper):
         (TAG_WHITESPACE, None, must, None),
         #   mandatory signal name
         (TAG_GENERIC, None, must, None),
-        #   collect until reserved ';'
+        #   collect until reserved ';',',',')'
         #       Error on any keywords
         (TAG_RESERVED, (RESERVED_SEMICOLON, RESERVED_COMMA, RESERVED_PAREN_CLOSE), collect_drop, lambda t: _tag(t) == TAG_KEYWORD),
         #   optional semicolon
@@ -291,43 +310,43 @@ class VerilogGrouper(Grouper):
         self.addParsers()
 
     def addParsers(self):
-        tag = (self.TAG_STATEMENT, self.TAG_REGDECS)
+        tag = (TAG_STATEMENT, TAG_REGDECS)
         self._regdec = self._dec(KEYWORD_REG)
         self.structparsers.append(StructParser("regdecs", self._regdec, tag=tag))
         self._regdec_with_range = self._dec_with_range(KEYWORD_REG)
         self.structparsers.append(StructParser("regdecs_with_range", self._regdec_with_range, tag=tag))
 
-        tag = (self.TAG_STATEMENT, self.TAG_WIREDECS)
+        tag = (TAG_STATEMENT, TAG_WIREDECS)
         self._wiredec = self._dec(KEYWORD_WIRE)
         self.structparsers.append(StructParser("wiredecs", self._wiredec, tag=tag))
         self._wiredec_with_range = self._dec_with_range(KEYWORD_WIRE)
         self.structparsers.append(StructParser("wiredecs_with_range", self._wiredec_with_range, tag=tag))
 
-        tag = (self.TAG_STATEMENT, self.TAG_ASSIGNS)
+        tag = (TAG_STATEMENT, TAG_ASSIGNS)
         self.structparsers.append(StructParser("assigns", self._assign, tag=tag))
         self.structparsers.append(StructParser("assigns_with_range", self._assign_with_range, tag=tag))
 
-        tag = (self.TAG_STATEMENT, self.TAG_PARAMETERS)
-        #self._paramdec = self._dec(KEYWORD_PARAMETER)
+        tag = (TAG_STATEMENT, TAG_PARAMETERS)
         self.structparsers.append(StructParser("paramdec", self._paramdec, tag=tag))
-        #self._paramdec_with_range = self._dec_with_range(KEYWORD_PARAMETER)
         self.structparsers.append(StructParser("paramdec_with_range", self._paramdec_with_range, tag=tag))
 
-        tag = (self.TAG_STATEMENT, self.TAG_LOCALPARAMS)
+        tag = (TAG_STATEMENT, TAG_LOCALPARAMS)
         self._localparamdec = self._dec(KEYWORD_LOCALPARAM)
         self.structparsers.append(StructParser("localparamdec", self._localparamdec, tag=tag))
         self._localparamdec_with_range = self._dec_with_range(KEYWORD_LOCALPARAM)
         self.structparsers.append(StructParser("localparamdec_with_range", self._localparamdec_with_range, tag=tag))
 
+        tag = (TAG_STATEMENT, TAG_PORTS)
+        self.structparsers.append(StructParser("port", self._port, tag=tag))
+        self.structparsers.append(StructParser("port_with_range", self._port_with_range, tag=tag))
         #self._verboseParsers = ["paramdec"]
 
-    def parseLayer1(self):
+    def parseLayer1(self, verbose=False):
         structdict = self.parseStructure()
         self.cs.copyPerspective("comments", "layer1")
         for name, (tag, structs) in structdict.items():
-            #if len(structs) == 0:
-            #    print(f"tag {tag} yielded no structs")
-            #print(f"tag = {tag}")
+            if verbose and (len(structs) == 0):
+                print(f"{name} yielded no structs")
             for struct in structs:
                 if len(struct) == 0:
                     continue
@@ -336,7 +355,10 @@ class VerilogGrouper(Grouper):
                 #print()
                 start = struct[0].start
                 stop = struct[-1].stop
-                #print(f"tagging {start}, {stop} with tag {tag}")
+                if verbose:
+                    sline, schar = self.cs.charToLineChar(start)
+                    pline, pchar = self.cs.charToLineChar(stop)
+                    print(f"Tagging line {sline}[{schar}] to line {pline}[{pchar}] with {_tagstr(tag)}")
                 self.cs.tag(slice(start, stop), tag)
         self.cs.setActivePerspective("layer1")
         return
@@ -345,7 +367,7 @@ class VerilogGrouper(Grouper):
         self.cs.setActivePerspective("layer1")
         _colormap = {
             TAG_COMMENT: Perspective.COLOR_LIGHTCYAN_EX,
-            self.TAG_STATEMENT: Perspective.COLOR_RED,
+            TAG_STATEMENT: Perspective.COLOR_RED,
         }
         self.cs.setColorMap(_colormap)
         self.cs.printColor()
@@ -394,7 +416,7 @@ def parseFile():
     gp.tokenize(instr)
     structdict = gp.parseStructure()
     #gp.printStructDict(structdict)
-    gp.parseLayer1()
+    gp.parseLayer1(verbose=False)
     gp.printLayer1()
     return
 
