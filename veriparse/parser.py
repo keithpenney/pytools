@@ -280,7 +280,12 @@ class Tokenizer():
         for opener, closer in groupers:
             otag = None
             ctag = None
-            for tag, chars in self._reserved.items():
+            # Support both dicts and sorted lists
+            if hasattr(self._reserved, 'items'):
+                _iter = self._reserved.items()
+            else:
+                _iter = self._reserved
+            for tag, chars in _iter:
                 char, escapedchar = chars
                 if char == opener:
                     otag = tag
@@ -361,7 +366,12 @@ class Tokenizer():
             _tag = token.tag
             #print(f"parsing {value}")
             if _tag == cs.TagGeneric:
-                for _kwTag, keyword in self._reserved.items():
+                # Support both dicts and ordered lists
+                if hasattr(self._reserved, 'items'):
+                    _iter = self._reserved.items()
+                else:
+                    _iter = self._reserved
+                for _kwTag, keyword in _iter:
                     self._tagWhitespace(cs, token, tag)
         cs.setActiveGetPerspective("whitespace")
         return
@@ -378,7 +388,12 @@ class Tokenizer():
             _tag = token.tag
             #print(f"parsing {value}")
             if _tag == cs.TagGeneric:
-                for _kwTag, reserved in self._reserved.items():
+                # Support both dicts and sorted lists
+                if hasattr(self._reserved, 'items'):
+                    _iter = self._reserved.items()
+                else:
+                    _iter = self._reserved
+                for _kwTag, reserved in _iter:
                     char, escapedchar = reserved
                     self._tagMatches(cs, token, escapedchar, (tag, _kwTag))
         cs.setActiveGetPerspective("reserved")

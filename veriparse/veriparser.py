@@ -50,6 +50,8 @@ __tags__ = (
     "RESERVED_BRACKET_CLOSE",
     "RESERVED_COMMA",
     "RESERVED_POUNDPAREN_OPEN",
+    "RESERVED_PARENSTAR_OPEN",
+    "RESERVED_PARENSTAR_CLOSE",
     "RESERVED_SEMICOLON",
     "RESERVED_COLON",
 
@@ -106,7 +108,6 @@ _colormap = {
     TAG_KEYWORD: Perspective.COLOR_YELLOW,
     TAG_RESERVED: Perspective.COLOR_GREEN,
 }
-
 # Keywords are only reserved when the adjacent characters are not [a-zA-Z0-9_]
 keywords = {
     KEYWORD_MODULE: "module",
@@ -129,6 +130,7 @@ keywords = {
     KEYWORD_ENDMODULE: "endmodule",
 }
 
+# TODO - Order these by length (num chars) before parsing
 # Reserved characters always have syntactic meaning (unless in a string or comment)
 reserved = {
     # (char pattern, escaped char pattern)
@@ -138,6 +140,8 @@ reserved = {
     RESERVED_MINUS: ("-", "\-"),
     RESERVED_MUL: ("*", "\*"),
     RESERVED_DIV: ("/", "\/"),
+    RESERVED_PARENSTAR_OPEN: ("(*", "\(\*"),
+    RESERVED_PARENSTAR_CLOSE: ("*)", "\*\)"),
     RESERVED_POUNDPAREN_OPEN: ("#(", "#\("),
     RESERVED_PAREN_OPEN: ("(", "\("),
     RESERVED_PAREN_CLOSE: (")", "\)"),
@@ -149,6 +153,10 @@ reserved = {
     RESERVED_SEMICOLON: (";", ";"),
     RESERVED_COLON: (":", "\:"),
 }
+
+_reserved_sorted = [(key, val) for key, val in reserved.items()]
+_reserved_sorted.sort(key=lambda x: len(x[1][0]))
+_reserved_sorted.reverse()
 
 macros = {
     MACRO_DEFINE: "`define",
@@ -373,6 +381,18 @@ class VerilogGrouper(Grouper):
         self.cs.printColor()
         return
 
+    def printLayer0(self):
+        self.cs.setActivePerspective("keywords")
+        _colormap = {
+            TAG_COMMENT: Perspective.COLOR_LIGHTCYAN_EX,
+            TAG_STRING: Perspective.COLOR_RED,
+            TAG_KEYWORD: Perspective.COLOR_GREEN,
+            TAG_RESERVED: Perspective.COLOR_BLUE,
+        }
+        self.cs.setColorMap(_colormap)
+        self.cs.printColor()
+        return
+
 def test_GrouperParseAssign():
     goods = [
         "assign foo=bar;",
@@ -412,12 +432,13 @@ def parseFile():
         reserved=TAG_RESERVED,
         keywords=TAG_KEYWORD
     )
-    gp = VerilogGrouper(reserved=reserved, keywords=keywords, macros=macros, tagmap=tagmap)
+    gp = VerilogGrouper(reserved=_reserved_sorted, keywords=keywords, macros=macros, tagmap=tagmap)
     gp.tokenize(instr)
     structdict = gp.parseStructure()
     #gp.printStructDict(structdict)
     gp.parseLayer1(verbose=False)
     gp.printLayer1()
+    gp.printLayer0()
     return
 
 if __name__ == "__main__":
