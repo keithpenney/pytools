@@ -57,11 +57,12 @@ class StructParser():
     collect_drop = 3    # Collect until match, dropping the match
     complete = 4        # Get opening grouper, collect until matching closing grouper
 
-    def __init__(self, name, structdef, tag=None):
+    def __init__(self, name, structdef, tag=None, verbose=False):
         self.name = name
         self._structdef = structdef
         self.tag = tag
         self.reset()
+        self.verbose = verbose
 
     def reset(self):
         self.structs = []
@@ -69,11 +70,23 @@ class StructParser():
         self.npart = 0
         self.retry = False
         self.groupLevel = 0
+        self.inmatch = False
 
     def doParse(self, token, retrying, grouping_pairs, verbose=False):
+        """Do one round of parsing.
+        retval: (retry, consumed)
+            if retry == True, the same token should be provided to the next call
+            if consumed == True, this token should not be passed to other parsers.
+        """
         # 'retry' = True means try this same token again
         if retrying != self.retry:
-            return False
+            return False, False
+        if not verbose:
+            verbose = self.verbose
+        consumed = False
+        def consume(x):
+            self.struct.append(x)
+            return True
         self.retry = False
         tag = _tag(token)
         subtag = _subtag(token)
@@ -85,6 +98,9 @@ class StructParser():
             hit_close = (tgt_tag == tag) and (closing_subtag == subtag)
         else:
             hit_close = False
+        if verbose:
+            #print(f"{_tagstr(tgt_tag)}, {_tagstr(tgt_subtag)}, {_tagstr(closing_subtag)}, {_tagstr(tag)}, {_tagstr(subtag)}")
+            pass
         if ef is not None:
             if (not hit) and (not hit_close) and ef(token):
                 raise SyntaxError(f"({self.name}) Syntax error parsing token: {token}")
@@ -103,17 +119,17 @@ class StructParser():
             else:
                 if verbose:
                     print(f"[{self.npart}] Hit on token: {token}")
-                self.struct.append(token)
+                consumed = consume(token)
             self.npart += 1
         elif ((do == self.must) and hit):
             if verbose:
                 print(f"[{self.npart}] Hit on token: {token}")
-            self.struct.append(token)
+            consumed = consume(token)
             self.npart += 1
         elif do == self.collect:
             if verbose:
                 print(f"[{self.npart}] Collecting token: {token}")
-            self.struct.append(token)
+            consumed = consume(token)
             if hit:
                 self.npart += 1
         elif do == self.collect_drop:
@@ -124,19 +140,28 @@ class StructParser():
             else:
                 if verbose:
                     print(f"[{self.npart}] Collecting token: {token}")
-                self.struct.append(token)
+                consumed = consume(token)
         elif do == self.complete:
-            if hit:
-                if verbose:
-                    print(f"Complete hit open on {token}")
-                self.groupLevel += 1
-            elif hit_close:
-                if verbose:
-                    print(f"Complete hit close on {token}")
-                self.groupLevel -= 1
-            self.struct.append(token)
-            if self.groupLevel == 0:
-                self.npart += 1
+            if not self.inmatch and hit:
+                self.inmatch = True
+            if self.inmatch:
+                if hit:
+                    if verbose:
+                        print(f"Complete hit open on {token}")
+                    self.groupLevel += 1
+                elif hit_close:
+                    if verbose:
+                        print(f"Complete hit close on {token}")
+                    self.groupLevel -= 1
+                consumed = consume(token)
+                if self.groupLevel == 0:
+                    self.inmatch = False
+                    self.npart += 1
+            else:
+                if (self.npart > 0) and verbose:
+                    print(f"Terminating early on {token}")
+                self.npart = 0
+                self.struct = []
         else:
             if verbose:
                 if self.npart > 0:
@@ -152,7 +177,7 @@ class StructParser():
                 print()
             self.struct = []
             self.npart = 0
-        return self.retry
+        return self.retry, consumed
 
     def get(self):
         if len(self.struct) > 0:
@@ -177,11 +202,11 @@ class Grouper():
         return
 
     def parseStructure(self):
-        # Assign is:
-        self.cs.setActivePerspective("keywords")
-        ics = iter(self.cs)
-        getNewToken = True
+        #import time
+        #print("parseStructure")
+        #__start = time.process_time()
         retry = False
+        ics = iter(self.cs)
         while True:
             if not retry:
                 try:
@@ -196,8 +221,11 @@ class Grouper():
                 if sp.name in self._verboseParsers:
                     verbose = True
                 try:
-                    if sp.doParse(token, retrying, self._grouping_pairs, verbose):
+                    _ret, consumed = sp.doParse(token, retrying, self._grouping_pairs, verbose)
+                    if _ret:
                         retry = True
+                    #if consumed:
+                    #    break
                 except SyntaxError as se:
                     err = str(se)
                 if err is not None:
@@ -206,6 +234,8 @@ class Grouper():
         structResults = {}
         for sp in self.structparsers:
             structResults[sp.name] = (sp.tag, sp.get())
+        #__end = time.process_time()
+        #print(f"DURATION: {__end-__start} seconds")
         return structResults
 
     @staticmethod
@@ -260,7 +290,7 @@ class TagMap():
 
 class Tokenizer():
     def __init__(self, quote='"', comment_single="//", comment_multi=("/*", "*/"),
-                 keywords={}, reserved={}, macros={}, tagmap=None):
+                 keywords={}, reserved={}, macros={}, tagmap=None, group_pairs=[]):
         self._quote = quote
         self._comment_single = comment_single
         self._comment_multi = comment_multi
@@ -271,11 +301,14 @@ class Tokenizer():
             self._tagmap = TagMap()
         else:
             self._tagmap = tagmap
-        self._mkGroupingPairs()
+        self._mkGroupingPairs(group_pairs)
 
-    def _mkGroupingPairs(self):
+    def _mkGroupingPairs(self, pairs=None):
         # Look for '[]'
-        groupers = (('[', ']'), ('(', ')'), ('{', '}'))
+        if pairs is not None:
+            groupers = pairs
+        else:
+            groupers = (('[', ']'), ('(', ')'), ('{', '}'))
         self._grouping_pairs = {}
         for opener, closer in groupers:
             otag = None
@@ -378,23 +411,20 @@ class Tokenizer():
 
     def tagReserved(self, cs, tag):
         cs.copyPerspective("whitespace", "reserved")
+        # Need to 'get' from reserved as well to ensure each reserved char only gets tagged once
+        # I.e. the tags for '(' and '*' don't come around and clobber "(*"
+        cs.setActivePerspective("reserved")
         token = None
-        ics = iter(cs)
-        while True:
-            try:
-                token = next(ics)
-            except StopIteration:
-                break
-            _tag = token.tag
-            #print(f"parsing {value}")
-            if _tag == cs.TagGeneric:
-                # Support both dicts and sorted lists
-                if hasattr(self._reserved, 'items'):
-                    _iter = self._reserved.items()
-                else:
-                    _iter = self._reserved
-                for _kwTag, reserved in _iter:
-                    char, escapedchar = reserved
+        # Support both dicts and sorted lists
+        if hasattr(self._reserved, 'items'):
+            _iter = self._reserved.items()
+        else:
+            _iter = self._reserved
+        for _kwTag, reserved in _iter:
+            char, escapedchar = reserved
+            for token in iter(cs):
+                _tag = token.tag
+                if _tag == cs.TagGeneric:
                     self._tagMatches(cs, token, escapedchar, (tag, _kwTag))
         cs.setActiveGetPerspective("reserved")
         return
@@ -431,6 +461,8 @@ class Tokenizer():
         restr = keyword
         offset = token.start
         _iter = re.finditer(restr, token.value)
+        #if tag == (TAG_RESERVED, RESERVED_PARENSTAR_OPEN):
+        #    print(f"######## _iter = {_iter}, restr = {restr}")
         for _match in _iter:
             #print(f"matched with {keyword}")
             start, stop = _match.span()
