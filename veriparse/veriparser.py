@@ -13,7 +13,7 @@
 #   Level 2: statements, module declarations, module instantiations, always/initial blocks
 
 from parser import Grouper, TagMap, StructParser
-from constr import ConStr, Perspective, _tag, _subtag
+from constr import ConStr, Perspective, _tag, _subtag, MultiTag
 
 __tags__ = (
     "TAG_GENERIC",
@@ -109,8 +109,12 @@ def _tagstr(tag):
 
 import parser
 parser._tagstr = _tagstr
+import constr
+constr._tagstr = _tagstr
 
-_grouping_pairs = (('[', ']'), ('(', ')'), ('{', '}'), ('(*', '*)'))
+_grouping_pairs = (
+    ('[', ']'), ('(', ')'), ('{', '}'), ('(*', '*)')
+)
 
 _colormap = {
     TAG_COMMENT: Perspective.COLOR_LIGHTCYAN_EX,
@@ -195,75 +199,76 @@ class VerilogGrouper(Grouper):
 
     _attribute = [
         #   collect from (* to *)
-        (TAG_RESERVED, RESERVED_PARENSTAR_OPEN, complete, None),
+        ((TAG_RESERVED, RESERVED_PARENSTAR_OPEN), complete, None),
     ]
 
     _port = [
         #   mandatory keyword input/output/inout
-        (TAG_KEYWORD, (KEYWORD_INPUT, KEYWORD_OUTPUT, KEYWORD_INOUT), must, None),
+        ((TAG_KEYWORD, (KEYWORD_INPUT, KEYWORD_OUTPUT, KEYWORD_INOUT)), must, None),
         #   mandatory whitespace
-        (TAG_WHITESPACE, None, must, None),
+        ((TAG_WHITESPACE, None), must, None),
         #   mandatory signal name
-        (TAG_GENERIC, None, must, None),
+        ((TAG_GENERIC, None), must, None),
         #   collect until reserved ';',',',')'
         #       Error on any keywords
-        (TAG_RESERVED, (RESERVED_SEMICOLON, RESERVED_COMMA, RESERVED_PAREN_CLOSE), collect_drop, lambda t: _tag(t) == TAG_KEYWORD),
+        ((TAG_RESERVED, (RESERVED_SEMICOLON, RESERVED_COMMA, RESERVED_PAREN_CLOSE)), collect_drop, lambda t: _tag(t) == TAG_KEYWORD),
     ]
 
     _port_with_range = [
         #   mandatory keyword input/output/inout
-        (TAG_KEYWORD, (KEYWORD_INPUT, KEYWORD_OUTPUT, KEYWORD_INOUT), must, None),
+        ((TAG_KEYWORD, (KEYWORD_INPUT, KEYWORD_OUTPUT, KEYWORD_INOUT)), must, None),
         #   mandatory whitespace
-        (TAG_WHITESPACE, None, must, None),
+        ((TAG_WHITESPACE, None), must, None),
         #   complete open reserved '[' with its mating close reserved ']'
-        (TAG_RESERVED, RESERVED_BRACKET_OPEN, complete, lambda t: _tag(t) != TAG_GENERIC),
+        ((TAG_RESERVED, RESERVED_BRACKET_OPEN), complete, lambda t: _tag(t) != TAG_GENERIC),
         #   optional whitespace
-        (TAG_WHITESPACE, None, can, None),
+        ((TAG_WHITESPACE, None), can, None),
         #   mandatory signal name
-        (TAG_GENERIC, None, must, None),
+        ((TAG_GENERIC, None), must, None),
         #   collect until reserved ';',',',')'
         #       Error on any keywords
-        (TAG_RESERVED, (RESERVED_SEMICOLON, RESERVED_COMMA, RESERVED_PAREN_CLOSE), collect_drop, lambda t: _tag(t) == TAG_KEYWORD),
+        ((TAG_RESERVED, (RESERVED_SEMICOLON, RESERVED_COMMA, RESERVED_PAREN_CLOSE)), collect_drop, lambda t: _tag(t) == TAG_KEYWORD),
     ]
 
     _assign = [
         # Tag, subtag, must/can, error if true
         #   mandatory keyword assign
-        (TAG_KEYWORD, KEYWORD_ASSIGN, must, None),
+        ((TAG_KEYWORD, KEYWORD_ASSIGN), must, None),
         #   mandatory whitespace
-        (TAG_WHITESPACE, None, must, None),
+        ((TAG_WHITESPACE, None), must, None),
         #   mandatory signal name
-        (TAG_GENERIC, None, must, None),
+        ((TAG_GENERIC, None), must, None),
         #   optional whitespace
-        (TAG_WHITESPACE, None, can, None),
+        ((TAG_WHITESPACE, None), can, None),
         #   mandatory reserved '='
-        (TAG_RESERVED, RESERVED_EQUAL, must, None),
+        ((TAG_RESERVED, RESERVED_EQUAL), must, None),
         #   collect until reserved ';'
         #       Error on any keywords
-        (TAG_RESERVED, RESERVED_SEMICOLON, collect, lambda t: _tag(t) == TAG_KEYWORD),
+        ((TAG_RESERVED, RESERVED_SEMICOLON), collect, lambda t: _tag(t) == TAG_KEYWORD),
     ]
 
     _assign_with_range = [
         # Tag, subtag, must/can, error if true
         #   mandatory keyword assign
-        (TAG_KEYWORD, KEYWORD_ASSIGN, must, None),
+        ((TAG_KEYWORD, KEYWORD_ASSIGN), must, None),
         #   mandatory whitespace
-        (TAG_WHITESPACE, None, must, None),
+        ((TAG_WHITESPACE, None), must, None),
         #   mandatory signal name
-        (TAG_GENERIC, None, must, None),
+        ((TAG_GENERIC, None), must, None),
         #   optional whitespace
-        (TAG_WHITESPACE, None, can, None),
+        ((TAG_WHITESPACE, None), can, None),
         #   complete open reserved '[' with its mating close reserved ']'
-        (TAG_RESERVED, RESERVED_BRACKET_OPEN, complete, lambda t: _tag(t) != TAG_GENERIC),
+        ((TAG_RESERVED, RESERVED_BRACKET_OPEN), complete, lambda t: _tag(t) != TAG_GENERIC),
         #   optional whitespace
-        (TAG_WHITESPACE, None, can, None),
+        ((TAG_WHITESPACE, None), can, None),
         #   mandatory reserved '='
-        (TAG_RESERVED, RESERVED_EQUAL, must, None),
+        ((TAG_RESERVED, RESERVED_EQUAL), must, None),
         #   collect until reserved ';'
         #       Error on any keywords
-        (TAG_RESERVED, RESERVED_SEMICOLON, collect, lambda t: _tag(t) == TAG_KEYWORD),
+        ((TAG_RESERVED, RESERVED_SEMICOLON), collect, lambda t: _tag(t) == TAG_KEYWORD),
     ]
 
+    # FIXME
     _paramdec = [
         # Tag, subtag, must/can, error if true
         #   mandatory keyword reg
@@ -279,6 +284,7 @@ class VerilogGrouper(Grouper):
         (TAG_RESERVED, RESERVED_SEMICOLON, can, None),
     ]
 
+    # FIXME
     _paramdec_with_range = [
         # Tag, subtag, must/can, error if true
         #   mandatory keyword reg
@@ -298,6 +304,7 @@ class VerilogGrouper(Grouper):
         (TAG_RESERVED, RESERVED_SEMICOLON, can, None),
     ]
 
+    # FIXME
     _moddec_open = [
         #   mandatory keyword module
         (TAG_KEYWORD, KEYWORD_MODULE, must, None),
@@ -307,6 +314,7 @@ class VerilogGrouper(Grouper):
         (TAG_GENERIC, None, must, None),
     ]
 
+    # FIXME
     _initial_open = [
         #   mandatory keyword initial
         (TAG_KEYWORD, KEYWORD_INITIAL, must, None),
@@ -316,6 +324,7 @@ class VerilogGrouper(Grouper):
         (TAG_KEYWORD, KEYWORD_BEGIN, can, None),
     ]
 
+    # FIXME
     # always @(posedge clk) begin
     _always_at_open = [
         #   mandatory keyword always
@@ -340,6 +349,7 @@ class VerilogGrouper(Grouper):
         (TAG_KEYWORD, KEYWORD_BEGIN, can, None),
     ]
 
+    # FIXME
     _always_delay_open = [
         #   mandatory keyword always
         (TAG_KEYWORD, KEYWORD_ALWAYS, must, None),
@@ -353,6 +363,7 @@ class VerilogGrouper(Grouper):
         (TAG_KEYWORD, KEYWORD_BEGIN, must, None),
     ]
 
+    # FIXME
     _if_open = [
         #   mandatory keyword if
         (TAG_KEYWORD, KEYWORD_IF, must, None),
@@ -366,6 +377,7 @@ class VerilogGrouper(Grouper):
         (TAG_KEYWORD, KEYWORD_BEGIN, can, None),
     ]
 
+    # FIXME
     _for_open = [
         #   mandatory keyword if
         (TAG_KEYWORD, KEYWORD_FOR, must, None),
@@ -379,6 +391,7 @@ class VerilogGrouper(Grouper):
         (TAG_KEYWORD, KEYWORD_BEGIN, can, None),
     ]
 
+    # FIXME
     _sync_assign = [
         #   mandatory signal value
         (TAG_GENERIC, None, must, None),
@@ -390,6 +403,7 @@ class VerilogGrouper(Grouper):
         (TAG_RESERVED, RESERVED_SEMICOLON, collect, None),
     ]
 
+    # FIXME
     _sync_assign_with_range = [
         #   mandatory signal value
         (TAG_GENERIC, None, must, None),
@@ -408,14 +422,14 @@ class VerilogGrouper(Grouper):
         _structdef = [
             # Tag, subtag, must/can, error if true
             #   mandatory keyword reg
-            (TAG_KEYWORD, keyword, cls.must, None),
+            ((TAG_KEYWORD, keyword), cls.must, None),
             #   mandatory whitespace
-            (TAG_WHITESPACE, None, cls.must, None),
+            ((TAG_WHITESPACE, None), cls.must, None),
             #   mandatory signal name
-            (TAG_GENERIC, None, cls.must, None),
+            ((TAG_GENERIC, None), cls.must, None),
             #   collect until reserved ';'
             #       Error on any keywords
-            (TAG_RESERVED, RESERVED_SEMICOLON, cls.collect, lambda t: _tag(t) == TAG_KEYWORD),
+            ((TAG_RESERVED, RESERVED_SEMICOLON), cls.collect, lambda t: _tag(t) == TAG_KEYWORD),
         ]
         return _structdef
 
@@ -424,18 +438,18 @@ class VerilogGrouper(Grouper):
         _structdef = [
             # Tag, subtag, must/can, error if true
             #   mandatory keyword
-            (TAG_KEYWORD, keyword, cls.must, None),
+            ((TAG_KEYWORD, keyword), cls.must, None),
             #   mandatory whitespace
-            (TAG_WHITESPACE, None, cls.must, None),
+            ((TAG_WHITESPACE, None), cls.must, None),
             #   complete open reserved '[' with its mating close reserved ']'
-            (TAG_RESERVED, RESERVED_BRACKET_OPEN, cls.complete, lambda t: _tag(t) != TAG_GENERIC),
+            ((TAG_RESERVED, RESERVED_BRACKET_OPEN), cls.complete, lambda t: _tag(t) != TAG_GENERIC),
             #   optional whitespace
-            (TAG_WHITESPACE, None, cls.can, None),
+            ((TAG_WHITESPACE, None), cls.can, None),
             #   mandatory signal name
-            (TAG_GENERIC, None, cls.must, None),
+            ((TAG_GENERIC, None), cls.must, None),
             #   collect until reserved ';'
             #       Error on any keywords
-            (TAG_RESERVED, RESERVED_SEMICOLON, cls.collect, lambda t: _tag(t) == TAG_KEYWORD),
+            ((TAG_RESERVED, RESERVED_SEMICOLON), cls.collect, lambda t: _tag(t) == TAG_KEYWORD),
         ]
         return _structdef
 
@@ -461,6 +475,16 @@ class VerilogGrouper(Grouper):
         self.structparsers.append(StructParser("assigns", self._assign, tag=tag))
         self.structparsers.append(StructParser("assigns_with_range", self._assign_with_range, tag=tag))
 
+        tag = (TAG_ATTRIBUTE, None)
+        self.structparsers.append(StructParser("attribute", self._attribute, tag=tag, verbose=False))
+
+        tag = (TAG_STATEMENT, TAG_PORTS)
+        self.structparsers.append(StructParser("port", self._port, tag=tag))
+        self.structparsers.append(StructParser("port_with_range", self._port_with_range, tag=tag))
+
+        # FIXME
+        return
+
         tag = (TAG_STATEMENT, TAG_PARAMETERS)
         self.structparsers.append(StructParser("paramdec", self._paramdec, tag=tag))
         self.structparsers.append(StructParser("paramdec_with_range", self._paramdec_with_range, tag=tag, verbose=True))
@@ -470,13 +494,6 @@ class VerilogGrouper(Grouper):
         self.structparsers.append(StructParser("localparamdec", self._localparamdec, tag=tag))
         self._localparamdec_with_range = self._dec_with_range(KEYWORD_LOCALPARAM)
         self.structparsers.append(StructParser("localparamdec_with_range", self._localparamdec_with_range, tag=tag))
-
-        tag = (TAG_STATEMENT, TAG_PORTS)
-        self.structparsers.append(StructParser("port", self._port, tag=tag))
-        self.structparsers.append(StructParser("port_with_range", self._port_with_range, tag=tag))
-
-        tag = (TAG_ATTRIBUTE, None)
-        self.structparsers.append(StructParser("attribute", self._attribute, tag=tag, verbose=False))
 
         tag = (TAG_BLOCK, TAG_MODDEC)
         self.structparsers.append(StructParser("moddec_open", self._moddec_open, tag=tag, verbose=False))
@@ -498,6 +515,8 @@ class VerilogGrouper(Grouper):
 
     def setParsersLayer1Pass1(self):
         self.structparsers = []
+        # FIXME
+        return
 
         tag = (TAG_STATEMENT, TAG_ASSIGN_SYNC)
         self.structparsers.append(StructParser("sync_assign", self._sync_assign, tag=tag, verbose=False))
@@ -538,14 +557,14 @@ class VerilogGrouper(Grouper):
     def printLayer1(self):
         self.cs.setActivePerspective("layer1")
         _colormap = {
-            TAG_COMMENT: Perspective.COLOR_LIGHTCYAN_EX,
-            TAG_STATEMENT: Perspective.COLOR_LIGHTCYAN_EX,
-            TAG_ATTRIBUTE: Perspective.COLOR_GREEN,
-            TAG_BLOCK: Perspective.COLOR_MAGENTA,
-            TAG_MACRO: Perspective.COLOR_YELLOW,
-            TAG_KEYWORD: Perspective.COLOR_LIGHTGREEN_EX,
-            TAG_STRING: Perspective.COLOR_RED,
-            TAG_RESERVED: Perspective.COLOR_BLUE,
+            MultiTag(TAG_COMMENT): Perspective.COLOR_LIGHTCYAN_EX,
+            MultiTag(TAG_STATEMENT): Perspective.COLOR_LIGHTCYAN_EX,
+            MultiTag(TAG_ATTRIBUTE): Perspective.COLOR_GREEN,
+            MultiTag(TAG_BLOCK): Perspective.COLOR_MAGENTA,
+            MultiTag(TAG_MACRO): Perspective.COLOR_YELLOW,
+            MultiTag(TAG_KEYWORD): Perspective.COLOR_LIGHTGREEN_EX,
+            MultiTag(TAG_STRING): Perspective.COLOR_RED,
+            MultiTag(TAG_RESERVED): Perspective.COLOR_BLUE,
         }
         self.cs.setColorMap(_colormap)
         self.cs.printColor()
@@ -554,10 +573,11 @@ class VerilogGrouper(Grouper):
     def printLayer0(self):
         self.cs.setActivePerspective("keywords")
         _colormap = {
-            TAG_COMMENT: Perspective.COLOR_LIGHTCYAN_EX,
-            TAG_STRING: Perspective.COLOR_RED,
-            TAG_KEYWORD: Perspective.COLOR_GREEN,
-            TAG_RESERVED: Perspective.COLOR_BLUE,
+            MultiTag(TAG_COMMENT): Perspective.COLOR_LIGHTCYAN_EX,
+            MultiTag(TAG_STRING): Perspective.COLOR_RED,
+            MultiTag(TAG_MACRO): Perspective.COLOR_YELLOW,
+            MultiTag(TAG_KEYWORD): Perspective.COLOR_GREEN,
+            MultiTag(TAG_RESERVED): Perspective.COLOR_BLUE,
         }
         self.cs.setColorMap(_colormap)
         self.cs.printColor()

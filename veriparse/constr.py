@@ -14,16 +14,17 @@ import re
 import colorama
 
 def _tag(t):
-    if isinstance(t.tag, tuple) or isinstance(t.tag, list):
-        return t.tag[0]
-    else:
+    if hasattr(t, 'tag'):
         return t.tag
+    else:
+        return t
+
+def _tagstr(t):
+    """Clobber me!"""
+    return str(t)
 
 def _subtag(t):
-    if isinstance(t.tag, tuple) or isinstance(t.tag, list):
-        return t.tag[1]
-    else:
-        return None
+    raise Exception("Don't use subtag!")
 
 # TODO:
 #   I'm currently dynamically building the tagDict when needed.  If it turns out to be a critical resource, we can
@@ -301,11 +302,14 @@ class ContextualString():
     def printColor(self):
         colorMap = self._activeGetPerspective.getColorMap()
         for token in self:
-            tag = _tag(token)
+            tag = token.tag
+            #print(f"tag = {tag}")
             value = token.value
-            color = colorMap.get(token.tag, None)
-            if color is None:
-                color = colorMap.get(tag, None)
+            color = None
+            for _tag, _color in colorMap.items():
+                if tag == _tag:
+                    color = _color
+                    break
             if (color is None) or (color == self._activeGetPerspective.COLOR_DEFAULT):
                 print(value, end="")
             else:
@@ -357,6 +361,11 @@ class ContextualString():
 
     def tag(self, index, tag, verbose=False):
         """'index' can be int or slice()"""
+        if not isinstance(tag, MultiTag):
+            if hasattr(tag, "__iter__"):
+                tag = MultiTag(*tag)
+            else:
+                tag = MultiTag(tag)
         if hasattr(index, "start"):
             start = index.start
             stop = index.stop
@@ -433,6 +442,84 @@ class StringToken():
     def __repr__(self):
         return self.__str__()
 
+class MultiTag():
+    """An arbitrary-depth tuple of tags which can be compared to any other MultiTag.
+    A 'None' functions as an 'all' for comparison purposes."""
+    def __init__(self, *args, closer=None):
+        self._tag = args
+        self._n = 0
+        self._closer = closer
+
+    def __str__(self):
+        ll = []
+        for tag in self._tag:
+            ll.append(_tagstr(tag))
+        return "(" + ", ".join(ll) + ")"
+
+    def __hash__(self):
+        return self._tag.__hash__()
+
+    def __len__(self):
+        return self._tag.__len__()
+
+    def __getitem__(self, n):
+        return self._tag.__getitem__(n)
+
+    def __eq__(self, other):
+        eq = True
+        n = 0
+        if not hasattr(other, '__len__'):
+            return self._tag[0] == other
+        while True:
+            if n < len(self):
+                tself = self[n]
+            else:
+                return True
+            if n < len(other):
+                tother = other[n]
+            else:
+                return True
+            if None in (tself, tother):
+                n += 1
+                continue
+            elif tself != tother:
+                return False
+            else:
+                n += 1
+        return True
+
+    def __iter__(self):
+        # We're an iterator now
+        self._n = 0
+        return self
+
+    def __next__(self):
+        if self._n < len(_tag):
+            item = self._tag[self._n]
+            self._n += 1
+            return item
+        else:
+            raise StopIteration
+
+    def closer(self):
+        return self._closer
+
+
+def test_MultiTag():
+    mt0 = MultiTag(0)
+    mt1 = MultiTag(1)
+    mt01 = MultiTag(0, 1)
+    mtNone = MultiTag(None)
+    mt0None = MultiTag(0, None)
+    print(f"mt0 == mt1 {mt0 == mt1}")
+    print(f"mt0 == mt01 {mt0 == mt01}")
+    print(f"mt0 == mtNone {mt0 == mtNone}")
+    print(f"mt1 == mtNone {mt1 == mtNone}")
+    print(f"mt0 == mt0None {mt0 == mt0None}")
+    print(f"mt1 == mt0None {mt1 == mt0None}")
+    return
+
+
 def testConStr():
     sa = ConStr("String A")
     sb = ConStr("Item B")
@@ -489,4 +576,5 @@ if __name__ == "__main__":
     #test_Perspective_tag()
     #testCurses()
     #testColorama()
-    testHighlighter(sys.argv)
+    #testHighlighter(sys.argv)
+    test_MultiTag()
