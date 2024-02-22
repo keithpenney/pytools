@@ -3,13 +3,7 @@
 # A just-for-fun test of a generic parsing concept
 
 # TODO:
-#   * Add step-over/step-into feature in doParse()
-#       enables nested StructDef's
-#       if match: step-into, else: step-over
-#       if this StructDefEntry is a StructDef:
-#           step-into means the next StructDefEntry is from the StructDef
-#           step-over means the next StructDefEntry is the StructDefEntry after the StructDef
-#       Need to walk the StructDef
+#   * When walking a StructDef, return the object itself (not its first entry)
 
 import re
 from constr import ConStr, Perspective, _tag, _subtag, MultiTag
@@ -114,13 +108,14 @@ class StructDef():
         sd = StructDef(*args)
         sd.reset()
         while True:
-            entry = sd.getNext()
+            try:
+                entry = sd.get()
+            except StopIteration:
+                break
             if matches(entry):
-                if not sd.stepInto():
-                    break
+                sd.step()
             else:
-                if not sd.stepOver():
-                    break
+                sd.step_out()
     """
     def __init__(self, sdelist):
         self._entries = []
@@ -130,6 +125,27 @@ class StructDef():
             self._entries.append(item)
         self.stack = [self]
         self._ix = 0
+
+    def __str__(self):
+        return f"StructDef({len(self._entries)})"
+
+    @property
+    def tag(self):
+        if self._ix < len(self._entries):
+            return self._entries[self._ix].tag
+        return None
+
+    @property
+    def op(self):
+        if self._ix < len(self._entries):
+            return self._entries[self._ix].op
+        return None
+
+    @property
+    def err(self):
+        if self._ix < len(self._entries):
+            return self._entries[self._ix].err
+        return None
 
     def __len__(self):
         return self._entries.__len__()
@@ -153,7 +169,9 @@ class StructDef():
         return
 
     def get(self):
-        """Raise StopIteration when complete"""
+        """Returns an instance of either StructDefEntry or StructDef.
+        Raises StopIteration when complete.
+        Use reset() to begin a new walk."""
         if len(self.stack) == 0:
             raise StopIteration
         try:
@@ -165,9 +183,7 @@ class StructDef():
             return self.get()    # RECURSE
         if isinstance(item, StructDef):
             self.stack.append(item)
-            return self.get()    # RECURSE
-        else:
-            return item
+        return item
 
     def _get(self):
         if self._ix < len(self._entries):
@@ -210,10 +226,9 @@ class StructParser():
     collect_drop = 3    # Collect until match, dropping the match
     complete = 4        # Get opening grouper, collect until matching closing grouper
 
-    def __init__(self, name, structdef, tag=None, grouping_pairs=None, verbose=False):
+    def __init__(self, name, structdef, tag=None, verbose=False):
         self.name = name
         self._structdef = StructDef(structdef)
-        self._grouping_pairs = grouping_pairs
         self.tag = tag
         self.reset()
         self.verbose = verbose
@@ -226,22 +241,17 @@ class StructParser():
         self.groupLevel = 0
         self.inmatch = False
 
-    def getCloser(self, tag):
-        # Hack the closer into place here
-        ct = []
-        closer = False
-        print(f"tag = {tag}")
-        for t in tag:
-            _closerTag = self._grouping_pairs.get(t, None)
-            if _closerTag is not None:
-                closer = True
-                ct.append(_closerTag)
-            else:
-                ct.append(t)
-        if closer:
-            print(f"Returning closer {ct}")
-            return MultiTag(ct)
-        return None
+    def new(self):
+        self.struct = []
+        self.npart = 0
+
+    def getNextEntry(self):
+        tag, do, err = self._structdef[self.npart]
+        return (tag, do, err)
+
+    def step(self):
+        self.npart += 1
+        return
 
     def doParse(self, token, verbose=False):
         """Do one round of parsing.
@@ -253,7 +263,7 @@ class StructParser():
             self.struct.append(x)
         retry = False
         tag = token.tag
-        tgt_tag, do, ef = self._structdef[self.npart]
+        tgt_tag, do, ef = self.getNextEntry()
         hit = tgt_tag == tag
         if do == self.complete:
             try:
@@ -281,23 +291,23 @@ class StructParser():
                 if verbose:
                     print(f"[{self.npart}] Hit on token: {token}")
                 consume(token)
-            self.npart += 1
+            self.step()
         elif ((do == self.must) and hit):
             if verbose:
                 print(f"[{self.npart}] Hit on token: {token}")
             consume(token)
-            self.npart += 1
+            self.step()
         elif do == self.collect:
             if verbose:
                 print(f"[{self.npart}] Collecting token: {token}")
             consume(token)
             if hit:
-                self.npart += 1
+                self.step()
         elif do == self.collect_drop:
             if hit:
                 if verbose:
                     print(f"[{self.npart}] Dropping hit token: {token}")
-                self.npart += 1
+                self.step()
             else:
                 if verbose:
                     print(f"[{self.npart}] Collecting token: {token}")
@@ -319,18 +329,16 @@ class StructParser():
                 consume(token)
                 if self.groupLevel == 0:
                     self.inmatch = False
-                    self.npart += 1
+                    self.step()
             else:
                 if (self.npart > 0) and verbose:
                     print(f"Terminating early on {token}")
-                self.npart = 0
-                self.struct = []
+                self.new()
         else:
             if verbose:
                 if self.npart > 0:
                     print(f"[{self.npart}] Reset on {token}; not the target structure")
-            self.npart = 0
-            self.struct = []
+            self.new()
         if self.npart == len(self._structdef):
             self.structs.append(self.struct)
             if verbose:
@@ -338,8 +346,7 @@ class StructParser():
                 for token in self.struct:
                     print(token.value, end="")
                 print()
-            self.struct = []
-            self.npart = 0
+            self.new()
         if retry:
             if verbose:
                 print("Retrying")
@@ -347,6 +354,7 @@ class StructParser():
         return self.retry
 
     def get(self):
+        """Get the results of parsing."""
         if len(self.struct) > 0:
             self.structs.append(self.struct)
         return self.structs
@@ -725,6 +733,8 @@ def test_StructDef_walk():
             item = sd2.get()
         except StopIteration:
             break
+        if isinstance(item, StructDef):
+            continue
         print(f"  {item}")
         sd2.step()
 
@@ -736,6 +746,8 @@ def test_StructDef_walk():
         except StopIteration:
             print("Break")
             break
+        if isinstance(item, StructDef):
+            continue
         print(f"  {item}")
         if item in (5, 3):
             print("    step_out")
