@@ -472,8 +472,8 @@ class VerilogGrouper(Grouper):
 
     def setParsersLayer1Pass0(self):
         self.structparsers = []
-        def add(s, struct):
-            self.structparsers.append(StructParser(s, struct, tag=tag))
+        def add(s, struct, verbose=False):
+            self.structparsers.append(StructParser(s, struct, tag=tag, verbose=verbose))
 
         tag = (TAG_STATEMENT, TAG_REGDECS)
         self._regdec = self._dec(KEYWORD_REG)
@@ -499,33 +499,32 @@ class VerilogGrouper(Grouper):
         add("port_with_range", self._port_with_range)
 
         tag = (TAG_STATEMENT, TAG_PARAMETERS)
-        self.structparsers.append(StructParser("paramdec", self._paramdec, tag=tag))
-        self.structparsers.append(StructParser("paramdec_with_range", self._paramdec_with_range, tag=tag, verbose=False))
+        add("paramdec", self._paramdec)
+        add("paramdec_with_range", self._paramdec_with_range)
 
         tag = (TAG_STATEMENT, TAG_LOCALPARAMS)
         self._localparamdec = self._dec(KEYWORD_LOCALPARAM)
-        self.structparsers.append(StructParser("localparamdec", self._localparamdec, tag=tag))
+        add("localparamdec", self._localparamdec)
         self._localparamdec_with_range = self._dec_with_range(KEYWORD_LOCALPARAM)
-        self.structparsers.append(StructParser("localparamdec_with_range", self._localparamdec_with_range, tag=tag))
+        add("localparamdec_with_range", self._localparamdec_with_range)
 
         tag = (TAG_BLOCK, TAG_MODDEC)
-        self.structparsers.append(StructParser("moddec_open", self._moddec_open, tag=tag, verbose=False))
+        add("moddec_open", self._moddec_open)
 
         tag = (TAG_BLOCK, TAG_INITIAL)
-        self.structparsers.append(StructParser("initial_open", self._initial_open, tag=tag, verbose=False))
+        add("initial_open", self._initial_open)
 
         tag = (TAG_BLOCK, TAG_ALWAYS)
-        self.structparsers.append(StructParser("always_at_open", self._always_at_open, tag=tag, verbose=False))
-        self.structparsers.append(StructParser("always_delay_open", self._always_delay_open, tag=tag, verbose=False))
+        add("always_at_open", self._always_at_open)
+        add("always_delay_open", self._always_delay_open)
 
         tag = (TAG_BLOCK, TAG_IF)
-        self.structparsers.append(StructParser("if_open", self._if_open, tag=tag, verbose=False))
+        add("if_open", self._if_open)
 
         tag = (TAG_BLOCK, TAG_FOR)
-        self.structparsers.append(StructParser("for_open", self._for_open, tag=tag, verbose=False))
+        add("for_open", self._for_open)
 
         #self._verboseParsers = ["port_with_range"]
-        # FIXME
         return
 
     def setParsersLayer1Pass1(self):
@@ -534,10 +533,7 @@ class VerilogGrouper(Grouper):
         tag = (TAG_STATEMENT, TAG_ASSIGN_SYNC)
         self.structparsers.append(StructParser("sync_assign", self._sync_assign, tag=tag, verbose=False))
         self.structparsers.append(StructParser("sync_assign_with_range", self._sync_assign_with_range, tag=tag, verbose=False))
-
-        # FIXME
         return
-
 
     def parseLayer1(self, verbose=False):
         self.parseLayer1Pass(0, verbose=verbose)

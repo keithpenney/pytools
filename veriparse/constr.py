@@ -259,10 +259,21 @@ class ContextualString():
         self._activeSetPerspective = _defaultPerspective
         self.parseLines()
 
-    def parseLines(self):
+    def parseLinesOLD(self):
         self.copyPerspective("default", "lines")
         self._tagMatches(0, "\n", self.TagNewline)
         self.setActivePerspective("default")
+        return
+
+    def parseLines(self):
+        start = 0
+        lines = [] # [(start, stop),]
+        for n in range(len(self._value)):
+            char = self._value[n]
+            if char == "\n":
+                lines.append((start, n))
+                start = n+1
+        self._lines = lines
         return
 
     def _tagMatches(self, offset, keyword, tag):
@@ -425,6 +436,13 @@ class ContextualString():
             raise StopIteration
 
     def charToLineChar(self, nchar):
+        for nline in range(len(self._lines)):
+            start, stop = self._lines[nline]
+            if (nchar < stop) and (nchar > start):
+                return (nline, nchar-start)
+        return (0, nchar)
+
+    def charToLineCharOLD(self, nchar):
         n = 0
         offset = 1
         nline = 1
@@ -439,7 +457,7 @@ class ContextualString():
                 return (nline, offset)
         return (0, nchar)
 
-    def charToLineCharOLD(self, nchar):
+    def charToLineCharOLD2(self, nchar):
         psp = self.getActiveGetPerspective()
         self.setActiveGetPerspective("lines")
         nline = 1

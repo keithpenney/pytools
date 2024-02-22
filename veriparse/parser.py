@@ -2,6 +2,15 @@
 
 # A just-for-fun test of a generic parsing concept
 
+# TODO:
+#   * Add step-over/step-into feature in doParse()
+#       enables nested StructDef's
+#       if match: step-into, else: step-over
+#       if this StructDefEntry is a StructDef:
+#           step-into means the next StructDefEntry is from the StructDef
+#           step-over means the next StructDefEntry is the StructDefEntry after the StructDef
+#       Need to walk the StructDef
+
 import re
 from constr import ConStr, Perspective, _tag, _subtag, MultiTag
 
@@ -100,17 +109,85 @@ class StructDefEntry():
 
 
 class StructDef():
-    """A definition of a structure to match"""
+    """A definition of a structure to match.
+    To walk the StructDef, use the walk API:
+        sd = StructDef(*args)
+        sd.reset()
+        while True:
+            entry = sd.getNext()
+            if matches(entry):
+                if not sd.stepInto():
+                    break
+            else:
+                if not sd.stepOver():
+                    break
+    """
     def __init__(self, sdelist):
         self._entries = []
         for item in sdelist:
-            self._entries.append(StructDefEntry(*item))
+            if not isinstance(item, StructDefEntry) and not isinstance(item, StructDef):
+                item = StructDefEntry(*item)
+            self._entries.append(item)
+        self.stack = [self]
+        self._ix = 0
 
     def __len__(self):
         return self._entries.__len__()
 
     def __getitem__(self, n):
-        return self._entries.__getitem__(n)
+        item = self._entries.__getitem__(n)
+        if isinstance(item, StructDef):
+            return item.__getitem__(0)
+        else:
+            return item
+
+    def reset(self):
+        self.stack = [self]
+        for item in self._entries:
+            if hasattr(item, "reset"):
+                item.reset()
+        self._ix = 0
+
+    def _inc(self):
+        self._ix += 1
+        return
+
+    def get(self):
+        """Raise StopIteration when complete"""
+        if len(self.stack) == 0:
+            raise StopIteration
+        try:
+            item = self.stack[-1]._get()
+        except StopIteration:
+            self.stack.pop()
+            if len(self.stack) > 0:
+                self.stack[-1]._inc()
+            return self.get()    # RECURSE
+        if isinstance(item, StructDef):
+            self.stack.append(item)
+            return self.get()    # RECURSE
+        else:
+            return item
+
+    def _get(self):
+        if self._ix < len(self._entries):
+            return self._entries[self._ix]
+        else:
+            raise StopIteration
+
+    def step(self):
+        """Step into the current entry if it is a StructDef.  Behaves the same as step_out if
+        this entry is a StructDefEntry."""
+        self.stack[-1]._inc()
+        return
+
+    def step_out(self):
+        """Step out of the current StructDef.
+        Returns False if empty after step; else True."""
+        self.stack.pop()
+        if len(self.stack) > 0:
+            self.stack[-1]._inc()
+        return
 
     def __iter__(self):
         # We're an iterator now
@@ -118,7 +195,7 @@ class StructDef():
         return self
 
     def __next__(self):
-        if self._n < len(_tag):
+        if self._n < len(self._entries):
             item = self._entries[self._n]
             self._n += 1
             return item
@@ -633,6 +710,41 @@ class Tokenizer():
             inranges.append((inpoint, len(line)))
         return inranges
 
+def test_StructDef_walk():
+    # HACK clobber StructDefEntry
+    global StructDefEntry
+    StructDefEntry = int
+    # (0, 1, 2, (3, 4, (5, 6, 7, 8)), 9)
+    sd0 = StructDef((5, 6, 7, 8))
+    sd1 = StructDef((3, 4, sd0))
+    sd2 = StructDef((0, 1, 2, sd1, 9))
+    sd2.reset()
+    print("Stepping all: Should be (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)")
+    while True:
+        try:
+            item = sd2.get()
+        except StopIteration:
+            break
+        print(f"  {item}")
+        sd2.step()
+
+    print("\nStepping out: should be (0, 1, 2, 3, 9)")
+    sd2.reset()
+    while True:
+        try:
+            item = sd2.get()
+        except StopIteration:
+            print("Break")
+            break
+        print(f"  {item}")
+        if item in (5, 3):
+            print("    step_out")
+            sd2.step_out()
+        else:
+            sd2.step()
+    return
+
+
 tagmap = TagMap(
     comments=TAG_COMMENT,
     macros=None,
@@ -674,5 +786,6 @@ def tokenizeFile():
 
 if __name__ == "__main__":
     import sys
-    testTokenizer(sys.argv)
+    #testTokenizer(sys.argv)
     #tokenizeFile()
+    test_StructDef_walk()
