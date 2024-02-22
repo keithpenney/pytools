@@ -438,7 +438,7 @@ class ContextualString():
     def charToLineChar(self, nchar):
         for nline in range(len(self._lines)):
             start, stop = self._lines[nline]
-            if (nchar < stop) and (nchar > start):
+            if (nchar < stop) and (nchar >= start):
                 return (nline, nchar-start)
         return (0, nchar)
 
@@ -495,7 +495,7 @@ class StringToken():
             else:
                 rangestr = f"{startline}[{startchar}: {stopchar}]"
         else:
-            rangestr = f"{startline}[startchar]: {stopline}[stopchar]"
+            rangestr = f"{startline}[{startchar}]: {stopline}[{stopchar}]"
         return f"Token({rangestr}, tag = {self.tag}, value = {self.value})"
 
     def __repr__(self):

@@ -73,7 +73,7 @@ def get_closer_tag(tag):
 class StructDefEntry():
     """A single entry in a StructDef"""
     def __init__(self, tag, op, err):
-        if not isinstance(tag, MultiTag):
+        if not isinstance(tag, MultiTag) and not isinstance(tag, StructDef):
             tag = MultiTag(*tag)
         self.tag = tag
         self.op = op
@@ -120,35 +120,24 @@ class StructDef():
     def __init__(self, sdelist):
         self._entries = []
         for item in sdelist:
-            if not isinstance(item, StructDefEntry) and not isinstance(item, StructDef):
+            if not isinstance(item, StructDefEntry):
                 item = StructDefEntry(*item)
             self._entries.append(item)
+        self._len = len(self._entries)
         self.stack = [self]
         self._ix = 0
 
     def __str__(self):
         return f"StructDef({len(self._entries)})"
 
-    @property
-    def tag(self):
-        if self._ix < len(self._entries):
-            return self._entries[self._ix].tag
-        return None
-
-    @property
-    def op(self):
-        if self._ix < len(self._entries):
-            return self._entries[self._ix].op
-        return None
-
-    @property
-    def err(self):
-        if self._ix < len(self._entries):
-            return self._entries[self._ix].err
-        return None
-
     def __len__(self):
         return self._entries.__len__()
+
+    def __eq__(self, other):
+        #print(f"__eq__: self._entries[{self._ix}] == {other}? : " + "{}".format(self._entries[self._ix].__eq__(other)))
+        if self._ix < self._len:
+            return self._entries[self._ix].__eq__(other)
+        return False
 
     def __getitem__(self, n):
         item = self._entries.__getitem__(n)
@@ -157,15 +146,24 @@ class StructDef():
         else:
             return item
 
+    def copy(self):
+        """Returns an independent copy of self."""
+        return StructDef(self._entries)
+
     def reset(self):
+        #print("    Stack reset")
         self.stack = [self]
         for item in self._entries:
-            if hasattr(item, "reset"):
-                item.reset()
+            if hasattr(item, "tag") and hasattr(item.tag, "reset"):
+                item.tag.reset()
         self._ix = 0
 
+    def done(self):
+        return self._ix == self._len
+
     def _inc(self):
-        self._ix += 1
+        if self._ix < self._len:
+            self._ix += 1
         return
 
     def get(self):
@@ -174,36 +172,51 @@ class StructDef():
         Use reset() to begin a new walk."""
         if len(self.stack) == 0:
             raise StopIteration
+        #if len(self.stack) > 1:
+        #    print(f"    Stack depth: {len(self.stack)}")
         try:
             item = self.stack[-1]._get()
         except StopIteration:
-            self.stack.pop()
+            popped = self.stack.pop()
+            #print(f"    Coming out of {popped}")
             if len(self.stack) > 0:
                 self.stack[-1]._inc()
             return self.get()    # RECURSE
-        if isinstance(item, StructDef):
-            self.stack.append(item)
         return item
 
     def _get(self):
-        if self._ix < len(self._entries):
+        if self._ix < self._len:
             return self._entries[self._ix]
         else:
             raise StopIteration
 
-    def step(self):
+    def step_into(self):
         """Step into the current entry if it is a StructDef.  Behaves the same as step_out if
         this entry is a StructDefEntry."""
+        item = self.get()
+        if isinstance(item.tag, StructDef):
+            #print(f"    Diving into {item.tag} (and resetting)")
+            item.tag.reset()
+            self.stack.append(item.tag)
+            return True
+        else:
+            self.stack[-1]._inc()
+        return False
+
+    def step(self):
+        if True:
+            return self.step_into()
         self.stack[-1]._inc()
         return
 
     def step_out(self):
         """Step out of the current StructDef.
         Returns False if empty after step; else True."""
-        self.stack.pop()
+        if len(self.stack) > 1:
+            self.stack.pop()
         if len(self.stack) > 0:
             self.stack[-1]._inc()
-        return
+        return False
 
     def __iter__(self):
         # We're an iterator now
@@ -211,7 +224,7 @@ class StructDef():
         return self
 
     def __next__(self):
-        if self._n < len(self._entries):
+        if self._ix < self._len:
             item = self._entries[self._n]
             self._n += 1
             return item
@@ -228,30 +241,49 @@ class StructParser():
 
     def __init__(self, name, structdef, tag=None, verbose=False):
         self.name = name
-        self._structdef = StructDef(structdef)
+        self.structdef = StructDef(structdef)
         self.tag = tag
         self.reset()
         self.verbose = verbose
 
     def reset(self):
+        self.new()
         self.structs = []
-        self.struct = []
-        self.npart = 0
         self.retry = False
         self.groupLevel = 0
         self.inmatch = False
 
+    def done(self):
+        return self.structdef.done()
+
     def new(self):
         self.struct = []
-        self.npart = 0
+        self.structdef.reset()
+        return
 
-    def getNextEntry(self):
-        tag, do, err = self._structdef[self.npart]
-        return (tag, do, err)
+    def getNextEntry(self, autoreset=False):
+        entry = self.structdef.get()
+        return (entry.tag, entry.op, entry.err)
 
     def step(self):
-        self.npart += 1
-        return
+        return self.structdef.step()
+
+    def step_out(self):
+        return self.structdef.step_out()
+
+    def step_into(self):
+        return self.structdef.step_into()
+
+    def _subParse(self, token, verbose=False):
+        """Return True to continue subparsing"""
+        if not verbose:
+            verbose = self.verbose
+        # If we hit at this level, try again one level down (return True)
+        if hit:
+            if self.step_into():
+                return True
+        # If there are no levels down, return False
+        return False
 
     def doParse(self, token, verbose=False):
         """Do one round of parsing.
@@ -263,14 +295,15 @@ class StructParser():
             self.struct.append(x)
         retry = False
         tag = token.tag
-        tgt_tag, do, ef = self.getNextEntry()
+        tgt_tag, do, ef = self.getNextEntry(autoreset=False)
         hit = tgt_tag == tag
         if do == self.complete:
             try:
                 closing_tag = get_closer_tag(tgt_tag)
             except AttributeError:
-                print(f"Why am I looking for a closer on tgt_tag {tgt_tag}? {self._structdef[self.npart]}")
+                print(f"#{self.name}: Why am I looking for a closer on tgt_tag {tgt_tag}? {self.structdef[len(self.struct)]}")
             hit_close = (closing_tag == tag)
+            #print(f"closing_tag = {closing_tag} == {tag} ? {closing_tag == tag}")
         else:
             hit_close = False
         if verbose:
@@ -283,75 +316,92 @@ class StructParser():
         if (do == self.can):
             if not hit:
                 if verbose:
-                    print(f"[{self.npart}] Pass on optional: {token}")
-                if self.npart < len(self._structdef)-1:
+                    print(f"#{self.name}: [{len(self.struct)}] Pass on optional: {token}")
+                if not self.done():
                     # This token must match the next rule
+                    retry = True
+                if self.step_out():
                     retry = True
             else:
                 if verbose:
-                    print(f"[{self.npart}] Hit on token: {token}")
-                consume(token)
-            self.step()
+                    print(f"#{self.name}: [{len(self.struct)}] Hit on optional: {token}")
+                if self.step():
+                    retry = True
+                else:
+                    consume(token)
         elif ((do == self.must) and hit):
             if verbose:
-                print(f"[{self.npart}] Hit on token: {token}")
-            consume(token)
-            self.step()
+                print(f"#{self.name}: [{len(self.struct)}] Hit on mandatory: {token}")
+            if self.step():
+                retry = True
+            else:
+                consume(token)
         elif do == self.collect:
             if verbose:
-                print(f"[{self.npart}] Collecting token: {token}")
+                print(f"#{self.name}: [{len(self.struct)}] Collecting: {token}")
             consume(token)
             if hit:
                 self.step()
         elif do == self.collect_drop:
             if hit:
                 if verbose:
-                    print(f"[{self.npart}] Dropping hit token: {token}")
+                    print(f"#{self.name}: [{len(self.struct)}] Dropping hit: {token}")
                 self.step()
             else:
                 if verbose:
-                    print(f"[{self.npart}] Collecting token: {token}")
+                    print(f"#{self.name}: [{len(self.struct)}] Collecting: {token}")
                 consume(token)
         elif do == self.complete:
             #if verbose:
             #    print(f"closing_tag = {closing_tag}")
-            if not self.inmatch and hit:
-                self.inmatch = True
+            if not self.inmatch:
+                if hit:
+                    #print("COMPLETE HIT!")
+                    self.inmatch = True
+                else:
+                    #print(f"COMPLETE MISS! {tgt_tag} != {tag}")
+                    pass
             if self.inmatch:
                 if hit:
                     if verbose:
-                        print(f"Complete hit open on {token}")
+                        print(f"#{self.name}: [{len(self.struct)}] Complete hit open on {token}")
                     self.groupLevel += 1
                 elif hit_close:
                     if verbose:
-                        print(f"Complete hit close on {token}")
+                        print(f"#{self.name}: [{len(self.struct)}] Complete hit close on {token}")
                     self.groupLevel -= 1
+                else:
+                    if verbose:
+                        print(f"#{self.name}: [{len(self.struct)}] Complete collecting {token}")
                 consume(token)
                 if self.groupLevel == 0:
+                    if verbose:
+                        print(f"#{self.name}: Stepping out of complete")
                     self.inmatch = False
-                    self.step()
+                    if self.step():
+                        retry = True
             else:
-                if (self.npart > 0) and verbose:
-                    print(f"Terminating early on {token}")
+                if (len(self.struct) > 0) and verbose:
+                    print(f"#{self.name}: Terminating early on {token}")
                 self.new()
         else:
             if verbose:
-                if self.npart > 0:
-                    print(f"[{self.npart}] Reset on {token}; not the target structure")
+                if len(self.struct) > 0:
+                    print(f"#{self.name}: [{len(self.struct)}] Reset on {token}; not the target structure")
             self.new()
-        if self.npart == len(self._structdef):
+        if self.done():
             self.structs.append(self.struct)
             if verbose:
-                print("Parse {} completed: ".format(len(self.structs)), end="")
+                print(f"#{self.name}: " + "Parse {} completed: ".format(len(self.structs)), end="")
                 for token in self.struct:
                     print(token.value, end="")
                 print()
             self.new()
         if retry:
             if verbose:
-                print("Retrying")
+                print(f"#{self.name}: R E T R Y")
             self.doParse(token, verbose=verbose)
-        return self.retry
+        return
 
     def get(self):
         """Get the results of parsing."""
@@ -376,7 +426,7 @@ class Grouper():
         self.cs = self.tk.parse(s)
         return
 
-    def parseStructure(self):
+    def parseStructure(self, skipTags=None):
         #import time
         #print("parseStructure")
         #__start = time.process_time()
@@ -386,6 +436,14 @@ class Grouper():
                 token = next(ics)
             except StopIteration:
                 break
+            if skipTags is not None:
+                doSkip = False
+                for tag in skipTags:
+                    if token.tag == tag:
+                        doSkip = True
+                        break
+                if doSkip:
+                    continue
             for sp in self.structparsers:
                 verbose = False
                 err = None
@@ -719,13 +777,10 @@ class Tokenizer():
         return inranges
 
 def test_StructDef_walk():
-    # HACK clobber StructDefEntry
-    global StructDefEntry
-    StructDefEntry = int
     # (0, 1, 2, (3, 4, (5, 6, 7, 8)), 9)
-    sd0 = StructDef((5, 6, 7, 8))
-    sd1 = StructDef((3, 4, sd0))
-    sd2 = StructDef((0, 1, 2, sd1, 9))
+    sd0 = StructDef((((5,),0,0), ((6,),0,0), ((7,),0,0), ((8,),0,0)))
+    sd1 = StructDef((((3,),0,0), ((4,),0,0), (sd0,0,0)))
+    sd2 = StructDef((((0,),0,0), ((1,),0,0), ((2,),0,0), (sd1,0,0), ((9,),0,0)))
     sd2.reset()
     print("Stepping all: Should be (0, 1, 2, 3, 4, 5, 6, 7, 8, 9)")
     while True:
