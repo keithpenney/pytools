@@ -42,13 +42,36 @@ reserved = {
 macros = {
 }
 
+_grouping_pairs = {
+    '[': ']',
+    '(': ')',
+    '{': '}',
+    '(*': '*)'
+}
+def get_closer_tag(tag):
+    """Clobber me (for customization)"""
+    ct = []
+    closer = False
+    for t in tag:
+        _closerTag = _grouping_pairs.get(t, None)
+        if _closerTag is not None:
+            print(f"                                                             _closerTag = _{closerTag}")
+            closer = True
+            ct.append(_closerTag)
+        else:
+            ct.append(t)
+    if closer:
+        print(f"Returning closer {ct}")
+        return MultiTag(ct)
+    return None
+
 #TODO
 #   1. If a subtag is a list of ints, this should be able to match multiple tags.  How implement?
 class StructDefEntry():
     """A single entry in a StructDef"""
     def __init__(self, tag, op, err):
         if not isinstance(tag, MultiTag):
-            tag = MultiTag(tag)
+            tag = MultiTag(*tag)
         self.tag = tag
         self.op = op
         self.err = err
@@ -110,9 +133,10 @@ class StructParser():
     collect_drop = 3    # Collect until match, dropping the match
     complete = 4        # Get opening grouper, collect until matching closing grouper
 
-    def __init__(self, name, structdef, tag=None, verbose=False):
+    def __init__(self, name, structdef, tag=None, grouping_pairs=None, verbose=False):
         self.name = name
         self._structdef = StructDef(structdef)
+        self._grouping_pairs = grouping_pairs
         self.tag = tag
         self.reset()
         self.verbose = verbose
@@ -125,11 +149,26 @@ class StructParser():
         self.groupLevel = 0
         self.inmatch = False
 
+    def getCloser(self, tag):
+        # Hack the closer into place here
+        ct = []
+        closer = False
+        print(f"tag = {tag}")
+        for t in tag:
+            _closerTag = self._grouping_pairs.get(t, None)
+            if _closerTag is not None:
+                closer = True
+                ct.append(_closerTag)
+            else:
+                ct.append(t)
+        if closer:
+            print(f"Returning closer {ct}")
+            return MultiTag(ct)
+        return None
+
     def doParse(self, token, verbose=False):
         """Do one round of parsing.
-        retval: (retry, consumed)
-            if retry == True, the same token should be provided to the next call
-            if consumed == True, this token should not be passed to other parsers.
+        Unused return value
         """
         if not verbose:
             verbose = self.verbose
@@ -137,12 +176,11 @@ class StructParser():
             self.struct.append(x)
         retry = False
         tag = token.tag
-        #print(f"token = {token}")
         tgt_tag, do, ef = self._structdef[self.npart]
         hit = tgt_tag == tag
         if do == self.complete:
             try:
-                closing_tag = tgt_tag.closer()
+                closing_tag = get_closer_tag(tgt_tag)
             except AttributeError:
                 print(f"Why am I looking for a closer on tgt_tag {tgt_tag}? {self._structdef[self.npart]}")
             hit_close = (closing_tag == tag)
@@ -150,6 +188,7 @@ class StructParser():
             hit_close = False
         if verbose:
             #print(f"{_tagstr(tgt_tag)}, {_tagstr(tgt_subtag)}, {_tagstr(closing_subtag)}, {_tagstr(tag)}, {_tagstr(subtag)}")
+            #print(f"token = {token}")
             pass
         if ef is not None:
             if (not hit) and (not hit_close) and ef(token):
@@ -187,6 +226,8 @@ class StructParser():
                     print(f"[{self.npart}] Collecting token: {token}")
                 consume(token)
         elif do == self.complete:
+            #if verbose:
+            #    print(f"closing_tag = {closing_tag}")
             if not self.inmatch and hit:
                 self.inmatch = True
             if self.inmatch:
@@ -210,7 +251,7 @@ class StructParser():
         else:
             if verbose:
                 if self.npart > 0:
-                    print(f"[{self.npart}] Reset; not the target structure")
+                    print(f"[{self.npart}] Reset on {token}; not the target structure")
             self.npart = 0
             self.struct = []
         if self.npart == len(self._structdef):
@@ -223,6 +264,8 @@ class StructParser():
             self.struct = []
             self.npart = 0
         if retry:
+            if verbose:
+                print("Retrying")
             self.doParse(token, verbose=verbose)
         return self.retry
 
@@ -459,16 +502,10 @@ class Tokenizer():
             _iter = self._reserved
         for _kwTag, reserved in _iter:
             char, escapedchar = reserved
-            # Hack the closer into place here
-            _closerTag = self._grouping_pairs.get(_kwTag, None)
-            if _closerTag is not None:
-                closer = MultiTag(tag, _closerTag)
-            else:
-                closer = None
             for token in iter(cs):
                 _tag = token.tag
                 if _tag == cs.TagGeneric:
-                    self._tagMatches(cs, token, escapedchar, MultiTag(tag, _kwTag, closer=closer))
+                    self._tagMatches(cs, token, escapedchar, MultiTag(tag, _kwTag))
         cs.setActiveGetPerspective("reserved")
         return
 

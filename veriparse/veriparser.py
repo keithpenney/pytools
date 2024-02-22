@@ -112,10 +112,6 @@ parser._tagstr = _tagstr
 import constr
 constr._tagstr = _tagstr
 
-_grouping_pairs = (
-    ('[', ']'), ('(', ')'), ('{', '}'), ('(*', '*)')
-)
-
 _colormap = {
     TAG_COMMENT: Perspective.COLOR_LIGHTCYAN_EX,
     TAG_STRING: Perspective.COLOR_RED,
@@ -189,6 +185,34 @@ COMMENT_SINGLE_LINE = "//"
 COMMENT_MULTI_LINE_OPEN = "/*"
 COMMENT_MULTI_LINE_CLOSE = "*/"
 
+_grouping_pairs = {
+    '[': ']',
+    '(': ')',
+    '{': '}',
+    '(*': '*)'
+}
+def get_closer_tag(tag):
+    """Clobber me (for customization)"""
+    ct = []
+    closer = False
+    for t in tag:
+        rg = reserved.get(t)
+        if rg is not None:
+            char, enc = rg
+            _closerTag = _grouping_pairs.get(char, None)
+            if _closerTag is not None:
+                closer = True
+                ct.append(_closerTag)
+            else:
+                ct.append(t)
+        else:
+            ct.append(t)
+    if closer:
+        return MultiTag(ct)
+    return None
+
+# TODO FIXME HACK ALERT. There has got to be a better way to associate opener/closer tags
+parser.get_closer_tag = get_closer_tag
 
 class VerilogGrouper(Grouper):
     can = StructParser.can
@@ -220,7 +244,7 @@ class VerilogGrouper(Grouper):
         #   mandatory whitespace
         ((TAG_WHITESPACE, None), must, None),
         #   complete open reserved '[' with its mating close reserved ']'
-        ((TAG_RESERVED, RESERVED_BRACKET_OPEN), complete, lambda t: _tag(t) != TAG_GENERIC),
+        ((TAG_RESERVED, RESERVED_BRACKET_OPEN), complete, None),
         #   optional whitespace
         ((TAG_WHITESPACE, None), can, None),
         #   mandatory signal name
@@ -258,7 +282,7 @@ class VerilogGrouper(Grouper):
         #   optional whitespace
         ((TAG_WHITESPACE, None), can, None),
         #   complete open reserved '[' with its mating close reserved ']'
-        ((TAG_RESERVED, RESERVED_BRACKET_OPEN), complete, lambda t: _tag(t) != TAG_GENERIC),
+        ((TAG_RESERVED, RESERVED_BRACKET_OPEN), complete, None),
         #   optional whitespace
         ((TAG_WHITESPACE, None), can, None),
         #   mandatory reserved '='
@@ -268,153 +292,143 @@ class VerilogGrouper(Grouper):
         ((TAG_RESERVED, RESERVED_SEMICOLON), collect, lambda t: _tag(t) == TAG_KEYWORD),
     ]
 
-    # FIXME
     _paramdec = [
         # Tag, subtag, must/can, error if true
         #   mandatory keyword reg
-        (TAG_KEYWORD, KEYWORD_PARAMETER, must, None),
+        ((TAG_KEYWORD, KEYWORD_PARAMETER), must, None),
         #   mandatory whitespace
-        (TAG_WHITESPACE, None, must, None),
+        ((TAG_WHITESPACE, None), must, None),
         #   mandatory signal name
-        (TAG_GENERIC, None, must, None),
+        ((TAG_GENERIC, None), must, None),
         #   collect until reserved ';',',',')'
         #       Error on any keywords
-        (TAG_RESERVED, (RESERVED_SEMICOLON, RESERVED_COMMA, RESERVED_PAREN_CLOSE), collect_drop, lambda t: _tag(t) == TAG_KEYWORD),
+        ((TAG_RESERVED, (RESERVED_SEMICOLON, RESERVED_COMMA, RESERVED_PAREN_CLOSE)), collect_drop, lambda t: _tag(t) == TAG_KEYWORD),
         #   optional semicolon
-        (TAG_RESERVED, RESERVED_SEMICOLON, can, None),
+        ((TAG_RESERVED, RESERVED_SEMICOLON), can, None),
     ]
 
-    # FIXME
     _paramdec_with_range = [
         # Tag, subtag, must/can, error if true
         #   mandatory keyword reg
-        (TAG_KEYWORD, KEYWORD_PARAMETER, must, None),
+        ((TAG_KEYWORD, KEYWORD_PARAMETER), must, None),
         #   mandatory whitespace
-        (TAG_WHITESPACE, None, must, None),
+        ((TAG_WHITESPACE, None), must, None),
         #   complete open reserved '[' with its mating close reserved ']'
-        (TAG_RESERVED, RESERVED_BRACKET_OPEN, complete, None),
+        ((TAG_RESERVED, RESERVED_BRACKET_OPEN), complete, None),
         #   optional whitespace
-        (TAG_WHITESPACE, None, can, None),
+        ((TAG_WHITESPACE, None), can, None),
         #   mandatory signal name
-        (TAG_GENERIC, None, must, None),
+        ((TAG_GENERIC, None), must, None),
         #   collect until reserved ';', ',', or ')'
         #       Error on any keywords
-        (TAG_RESERVED, (RESERVED_SEMICOLON, RESERVED_COMMA, RESERVED_PAREN_CLOSE), collect_drop, lambda t: _tag(t) == TAG_KEYWORD),
+        ((TAG_RESERVED, (RESERVED_SEMICOLON, RESERVED_COMMA, RESERVED_PAREN_CLOSE)), collect_drop, lambda t: _tag(t) == TAG_KEYWORD),
         #   optional semicolon
-        (TAG_RESERVED, RESERVED_SEMICOLON, can, None),
+        ((TAG_RESERVED, RESERVED_SEMICOLON), can, None),
     ]
 
-    # FIXME
     _moddec_open = [
         #   mandatory keyword module
-        (TAG_KEYWORD, KEYWORD_MODULE, must, None),
+        ((TAG_KEYWORD, KEYWORD_MODULE), must, None),
         #   mandatory whitespace
-        (TAG_WHITESPACE, None, must, None),
+        ((TAG_WHITESPACE, None), must, None),
         #   mandatory module name
-        (TAG_GENERIC, None, must, None),
+        ((TAG_GENERIC, None), must, None),
     ]
 
-    # FIXME
     _initial_open = [
         #   mandatory keyword initial
-        (TAG_KEYWORD, KEYWORD_INITIAL, must, None),
+        ((TAG_KEYWORD, KEYWORD_INITIAL), must, None),
         #   optional whitespace
-        (TAG_WHITESPACE, None, can, None),
+        ((TAG_WHITESPACE, None), can, None),
         #   optional keyword begin
-        (TAG_KEYWORD, KEYWORD_BEGIN, can, None),
+        ((TAG_KEYWORD, KEYWORD_BEGIN), can, None),
     ]
 
-    # FIXME
     # always @(posedge clk) begin
     _always_at_open = [
         #   mandatory keyword always
-        (TAG_KEYWORD, KEYWORD_ALWAYS, must, None),
+        ((TAG_KEYWORD, KEYWORD_ALWAYS), must, None),
         #   optional whitespace
-        (TAG_WHITESPACE, None, can, None),
+        ((TAG_WHITESPACE, None), can, None),
         #   mandatory reserved '@('
-        (TAG_RESERVED, RESERVED_ATPAREN_OPEN, must, None),
+        ((TAG_RESERVED, RESERVED_ATPAREN_OPEN), must, None),
         #   optional whitespace
-        (TAG_WHITESPACE, None, can, None),
+        ((TAG_WHITESPACE, None), can, None),
         #   mandatory keyword always
-        (TAG_KEYWORD, (KEYWORD_POSEDGE, KEYWORD_NEGEDGE), must, None),
+        ((TAG_KEYWORD, (KEYWORD_POSEDGE, KEYWORD_NEGEDGE)), must, None),
         #   mandatory whitespace
-        (TAG_WHITESPACE, None, must, None),
+        ((TAG_WHITESPACE, None), must, None),
         #   mandatory clk name
-        (TAG_GENERIC, None, must, None),
+        ((TAG_GENERIC, None), must, None),
         #   mandatory reserved ')'
-        (TAG_RESERVED, RESERVED_PAREN_CLOSE, must, None),
+        ((TAG_RESERVED, RESERVED_PAREN_CLOSE), must, None),
         #   optional whitespace
-        (TAG_WHITESPACE, None, can, None),
+        ((TAG_WHITESPACE, None), can, None),
         #   optional keyword begin
-        (TAG_KEYWORD, KEYWORD_BEGIN, can, None),
+        ((TAG_KEYWORD, KEYWORD_BEGIN), can, None),
     ]
 
-    # FIXME
     _always_delay_open = [
         #   mandatory keyword always
-        (TAG_KEYWORD, KEYWORD_ALWAYS, must, None),
+        ((TAG_KEYWORD, KEYWORD_ALWAYS), must, None),
         #   mandatory whitespace
-        (TAG_WHITESPACE, None, must, None),
+        ((TAG_WHITESPACE, None), must, None),
         #   optional delay value
-        (TAG_GENERIC, None, can, None),
+        ((TAG_GENERIC, None), can, None),
         #   optional whitespace
-        (TAG_WHITESPACE, None, can, None),
+        ((TAG_WHITESPACE, None), can, None),
         #   mandatory keyword begin
-        (TAG_KEYWORD, KEYWORD_BEGIN, must, None),
+        ((TAG_KEYWORD, KEYWORD_BEGIN), must, None),
     ]
 
-    # FIXME
     _if_open = [
         #   mandatory keyword if
-        (TAG_KEYWORD, KEYWORD_IF, must, None),
+        ((TAG_KEYWORD, KEYWORD_IF), must, None),
         #   mandatory whitespace
-        (TAG_WHITESPACE, None, must, None),
+        ((TAG_WHITESPACE, None), must, None),
         #   complete from ( to )
-        (TAG_RESERVED, RESERVED_PAREN_OPEN, complete, None),
+        ((TAG_RESERVED, RESERVED_PAREN_OPEN), complete, None),
         #   optional whitespace
-        (TAG_WHITESPACE, None, can, None),
+        ((TAG_WHITESPACE, None), can, None),
         #   optional keyword begin
-        (TAG_KEYWORD, KEYWORD_BEGIN, can, None),
+        ((TAG_KEYWORD, KEYWORD_BEGIN), can, None),
     ]
 
-    # FIXME
     _for_open = [
         #   mandatory keyword if
-        (TAG_KEYWORD, KEYWORD_FOR, must, None),
+        ((TAG_KEYWORD, KEYWORD_FOR), must, None),
         #   mandatory whitespace
-        (TAG_WHITESPACE, None, must, None),
+        ((TAG_WHITESPACE, None), must, None),
         #   complete from ( to )
-        (TAG_RESERVED, RESERVED_PAREN_OPEN, complete, None),
+        ((TAG_RESERVED, RESERVED_PAREN_OPEN), complete, None),
         #   optional whitespace
-        (TAG_WHITESPACE, None, can, None),
+        ((TAG_WHITESPACE, None), can, None),
         #   optional keyword begin
-        (TAG_KEYWORD, KEYWORD_BEGIN, can, None),
+        ((TAG_KEYWORD, KEYWORD_BEGIN), can, None),
     ]
 
-    # FIXME
     _sync_assign = [
         #   mandatory signal value
-        (TAG_GENERIC, None, must, None),
+        ((TAG_GENERIC, None), must, None),
         #   optional whitespace
-        (TAG_WHITESPACE, None, can, None),
+        ((TAG_WHITESPACE, None), can, None),
         #   mandatory reserved '=' or '<='
-        (TAG_RESERVED, (RESERVED_EQUAL, RESERVED_EQUAL_DELAYED), must, None),
+        ((TAG_RESERVED, (RESERVED_EQUAL, RESERVED_EQUAL_DELAYED)), must, None),
         #   collect until reserved ';'
-        (TAG_RESERVED, RESERVED_SEMICOLON, collect, None),
+        ((TAG_RESERVED, RESERVED_SEMICOLON), collect, None),
     ]
 
-    # FIXME
     _sync_assign_with_range = [
         #   mandatory signal value
-        (TAG_GENERIC, None, must, None),
+        ((TAG_GENERIC, None), must, None),
         #   complete from [ to ]
-        (TAG_RESERVED, RESERVED_BRACKET_OPEN, complete, None),
+        ((TAG_RESERVED, RESERVED_BRACKET_OPEN), complete, None),
         #   optional whitespace
-        (TAG_WHITESPACE, None, can, None),
+        ((TAG_WHITESPACE, None), can, None),
         #   mandatory reserved '=' or '<='
-        (TAG_RESERVED, (RESERVED_EQUAL, RESERVED_EQUAL_DELAYED), must, None),
+        ((TAG_RESERVED, (RESERVED_EQUAL, RESERVED_EQUAL_DELAYED)), must, None),
         #   collect until reserved ';'
-        (TAG_RESERVED, RESERVED_SEMICOLON, collect, None),
+        ((TAG_RESERVED, RESERVED_SEMICOLON), collect, None),
     ]
 
     @classmethod
@@ -442,7 +456,7 @@ class VerilogGrouper(Grouper):
             #   mandatory whitespace
             ((TAG_WHITESPACE, None), cls.must, None),
             #   complete open reserved '[' with its mating close reserved ']'
-            ((TAG_RESERVED, RESERVED_BRACKET_OPEN), cls.complete, lambda t: _tag(t) != TAG_GENERIC),
+            ((TAG_RESERVED, RESERVED_BRACKET_OPEN), cls.complete, None),
             #   optional whitespace
             ((TAG_WHITESPACE, None), cls.can, None),
             #   mandatory signal name
@@ -458,36 +472,35 @@ class VerilogGrouper(Grouper):
 
     def setParsersLayer1Pass0(self):
         self.structparsers = []
+        def add(s, struct):
+            self.structparsers.append(StructParser(s, struct, tag=tag))
 
         tag = (TAG_STATEMENT, TAG_REGDECS)
         self._regdec = self._dec(KEYWORD_REG)
-        self.structparsers.append(StructParser("regdec", self._regdec, tag=tag))
+        add("regdec", self._regdec)
         self._regdec_with_range = self._dec_with_range(KEYWORD_REG)
-        self.structparsers.append(StructParser("regdec_with_range", self._regdec_with_range, tag=tag))
+        add("regdec_with_range", self._regdec_with_range)
 
         tag = (TAG_STATEMENT, TAG_WIREDECS)
         self._wiredec = self._dec(KEYWORD_WIRE)
-        self.structparsers.append(StructParser("wiredec", self._wiredec, tag=tag))
+        add("wiredec", self._wiredec)
         self._wiredec_with_range = self._dec_with_range(KEYWORD_WIRE)
-        self.structparsers.append(StructParser("wiredec_with_range", self._wiredec_with_range, tag=tag))
+        add("wiredec_with_range", self._wiredec_with_range)
 
         tag = (TAG_STATEMENT, TAG_ASSIGNS)
-        self.structparsers.append(StructParser("assigns", self._assign, tag=tag))
-        self.structparsers.append(StructParser("assigns_with_range", self._assign_with_range, tag=tag))
+        add("assigns", self._assign)
+        add("assigns_with_range", self._assign_with_range)
 
         tag = (TAG_ATTRIBUTE, None)
-        self.structparsers.append(StructParser("attribute", self._attribute, tag=tag, verbose=False))
+        add("attribute", self._attribute)
 
         tag = (TAG_STATEMENT, TAG_PORTS)
-        self.structparsers.append(StructParser("port", self._port, tag=tag))
-        self.structparsers.append(StructParser("port_with_range", self._port_with_range, tag=tag))
-
-        # FIXME
-        return
+        add("port", self._port)
+        add("port_with_range", self._port_with_range)
 
         tag = (TAG_STATEMENT, TAG_PARAMETERS)
         self.structparsers.append(StructParser("paramdec", self._paramdec, tag=tag))
-        self.structparsers.append(StructParser("paramdec_with_range", self._paramdec_with_range, tag=tag, verbose=True))
+        self.structparsers.append(StructParser("paramdec_with_range", self._paramdec_with_range, tag=tag, verbose=False))
 
         tag = (TAG_STATEMENT, TAG_LOCALPARAMS)
         self._localparamdec = self._dec(KEYWORD_LOCALPARAM)
@@ -511,16 +524,20 @@ class VerilogGrouper(Grouper):
         tag = (TAG_BLOCK, TAG_FOR)
         self.structparsers.append(StructParser("for_open", self._for_open, tag=tag, verbose=False))
 
-        #self._verboseParsers = ["attribute"]
+        #self._verboseParsers = ["port_with_range"]
+        # FIXME
+        return
 
     def setParsersLayer1Pass1(self):
         self.structparsers = []
-        # FIXME
-        return
 
         tag = (TAG_STATEMENT, TAG_ASSIGN_SYNC)
         self.structparsers.append(StructParser("sync_assign", self._sync_assign, tag=tag, verbose=False))
         self.structparsers.append(StructParser("sync_assign_with_range", self._sync_assign_with_range, tag=tag, verbose=False))
+
+        # FIXME
+        return
+
 
     def parseLayer1(self, verbose=False):
         self.parseLayer1Pass(0, verbose=verbose)
@@ -558,12 +575,12 @@ class VerilogGrouper(Grouper):
         self.cs.setActivePerspective("layer1")
         _colormap = {
             MultiTag(TAG_COMMENT): Perspective.COLOR_LIGHTCYAN_EX,
-            MultiTag(TAG_STATEMENT): Perspective.COLOR_LIGHTCYAN_EX,
+            MultiTag(TAG_STATEMENT): Perspective.COLOR_RED,
             MultiTag(TAG_ATTRIBUTE): Perspective.COLOR_GREEN,
             MultiTag(TAG_BLOCK): Perspective.COLOR_MAGENTA,
             MultiTag(TAG_MACRO): Perspective.COLOR_YELLOW,
             MultiTag(TAG_KEYWORD): Perspective.COLOR_LIGHTGREEN_EX,
-            MultiTag(TAG_STRING): Perspective.COLOR_RED,
+            MultiTag(TAG_STRING): Perspective.COLOR_BLUE,
             MultiTag(TAG_RESERVED): Perspective.COLOR_BLUE,
         }
         self.cs.setColorMap(_colormap)
@@ -582,6 +599,10 @@ class VerilogGrouper(Grouper):
         self.cs.setColorMap(_colormap)
         self.cs.printColor()
         return
+
+def test_MultiTag():
+    mt_keyword_reg = MultiTag(TAG_KEYWORD, keyword)
+    return
 
 def test_GrouperParseAssign():
     goods = [
@@ -622,9 +643,10 @@ def parseFile():
         reserved=TAG_RESERVED,
         keywords=TAG_KEYWORD
     )
-    gp = VerilogGrouper(reserved=_reserved_sorted, keywords=keywords, macros=macros,
-                        tagmap=tagmap, group_pairs=_grouping_pairs)
+    gp = VerilogGrouper(reserved=_reserved_sorted, keywords=keywords, macros=macros, tagmap=tagmap)
     gp.tokenize(instr)
+    # This is helpful to clobber
+    constr.charToLineChar = gp.cs.charToLineChar
     #gp.printStructDict(structdict)
     gp.parseLayer1(verbose=False)
     #gp.printLayer0()

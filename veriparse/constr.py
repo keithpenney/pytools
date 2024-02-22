@@ -23,6 +23,10 @@ def _tagstr(t):
     """Clobber me!"""
     return str(t)
 
+def charToLineChar(nchar):
+    """Clobber me with ContextualString.charToLineChar after instantiated."""
+    return (0, nchar)
+
 def _subtag(t):
     raise Exception("Don't use subtag!")
 
@@ -400,6 +404,12 @@ class ContextualString():
             raise Exception(f"Invalid perspective label: {label}")
         return
 
+    def getActiveGetPerspective(self):
+        return self._activeGetPerspective.label
+
+    def getActiveSetPerspective(self):
+        return self._activeSetPerspective.label
+
     def __iter__(self):
         # We're an iterator now
         self._ntoken = 0
@@ -415,14 +425,36 @@ class ContextualString():
             raise StopIteration
 
     def charToLineChar(self, nchar):
+        n = 0
+        offset = 1
+        nline = 1
+        for n in range(len(self._value)):
+            char = self._value[n]
+            if char == "\n":
+                offset = 1
+                nline += 1
+            else:
+                offset += 1
+            if n == nchar:
+                return (nline, offset)
+        return (0, nchar)
+
+    def charToLineCharOLD(self, nchar):
+        psp = self.getActiveGetPerspective()
         self.setActiveGetPerspective("lines")
         nline = 1
+        rval = None
         for token in iter(self):
             if token.tag == self.TagNewline:
                 nline += 1
             if (nchar >= token.start) and (nchar < token.stop):
-                return (nline, nchar-token.start)
-        return (nline, nchar-token.start)
+                rval = (nline, nchar-token.start)
+                break
+        self.setActiveGetPerspective(psp)
+        if rval is None:
+            return (nline, nchar-token.start)
+        else:
+            return rval
 
 # Alias
 class ConStr(ContextualString):
@@ -437,14 +469,34 @@ class StringToken():
         self.stop = stop
 
     def __str__(self):
-        return f"Token([{self.start}, {self.stop}], tag = {self.tag}, value = {self.value})"
+        startline, startchar = charToLineChar(self.start)
+        stopline, stopchar = charToLineChar(self.stop)
+        if startline == stopline:
+            if startline == 0:
+                rangestr = f"[{startchar}: {stopchar}]"
+            else:
+                rangestr = f"{startline}[{startchar}: {stopchar}]"
+        else:
+            rangestr = f"{startline}[startchar]: {stopline}[stopchar]"
+        return f"Token({rangestr}, tag = {self.tag}, value = {self.value})"
 
     def __repr__(self):
         return self.__str__()
 
 class MultiTag():
     """An arbitrary-depth tuple of tags which can be compared to any other MultiTag.
-    A 'None' functions as an 'all' for comparison purposes."""
+    A 'None' functions as an 'all' for comparison purposes.
+    Examples of MultiTag variations:
+        int:            e.g. MultiTag(0xa5)
+        string:         e.g. MultiTag("Foo")
+        2-int:          e.g. MultiTag(10, 20)
+        2-string:       e.g. MultiTag("Foo", "Bar")
+        3-mixed:        e.g. MultiTag(100, "foo", "bar")
+        2-int matching any on second element:
+                        e.g. MultiTag(10, None)
+        3-int matching two discrete values (0 or 0xff) on first element:
+                        e.g. MultiTag((0, 0xff), 867, 5309)
+    """
     def __init__(self, *args, closer=None):
         self._tag = args
         self._n = 0
@@ -465,6 +517,19 @@ class MultiTag():
     def __getitem__(self, n):
         return self._tag.__getitem__(n)
 
+    @staticmethod
+    def isString(x):
+        if hasattr(x, "lower"):
+            return True
+        return False
+
+    @staticmethod
+    def isList(x):
+        """Matches on lists or tuples"""
+        if hasattr(x, "__len__") and not hasattr(x, "lower"):
+            return True
+        return False
+
     def __eq__(self, other):
         eq = True
         n = 0
@@ -482,9 +547,19 @@ class MultiTag():
             if None in (tself, tother):
                 n += 1
                 continue
-            elif tself != tother:
-                return False
+            # Handle tuples at this level
             else:
+                if not self.isList(tself):
+                    tself = (tself,)
+                if not self.isList(tother):
+                    tother = (tother,)
+                matchone = False
+                for tselftag in tself:
+                    if tselftag in tother:
+                        matchone = True
+                        break
+                if not matchone:
+                    return False
                 n += 1
         return True
 
@@ -494,7 +569,7 @@ class MultiTag():
         return self
 
     def __next__(self):
-        if self._n < len(_tag):
+        if self._n < len(self._tag):
             item = self._tag[self._n]
             self._n += 1
             return item
@@ -517,6 +592,27 @@ def test_MultiTag():
     print(f"mt1 == mtNone {mt1 == mtNone}")
     print(f"mt0 == mt0None {mt0 == mt0None}")
     print(f"mt1 == mt0None {mt1 == mt0None}")
+
+    mt0or1 = MultiTag((0, 1))
+    mt1or2 = MultiTag((1, 2))
+    mt01or2 = MultiTag(0, (1, 2))
+    mtNone1 = MultiTag(None, 1)
+    mt01or2or3 = MultiTag(0, (1, 2, 3))
+
+    print(f"mt0 == mt0or1 {mt0 == mt0or1}")
+    print(f"mt0 == mt1or2 {mt0 == mt1or2}")
+    print(f"mt1 == mt1or2 {mt1 == mt1or2}")
+    print(f"mt0 == mtNone1 {mt0 == mtNone1}")
+    print(f"mtNone1 == mt0 {mtNone1 == mt0}")
+    print(f"mt0 == mt01or2or3 {mt0 == mt01or2or3}")
+    print(f"mt01 == mt01or2or3 {mt01 == mt01or2or3}")
+
+    mt04 = MultiTag(0, 4)
+    print(f"mt04 == mt01or2or3 {mt04 == mt01or2or3}")
+
+    mt02 = MultiTag(0, 2)
+    print(f"mt01 == mt02 {mt01 == mt02}")
+    print(f"mt02 == mt01 {mt02 == mt01}")
     return
 
 
