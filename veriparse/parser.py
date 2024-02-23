@@ -233,11 +233,13 @@ class StructDef():
 
 
 class StructParser():
-    can = 0             # Optional
-    must = 1            # Mandatory
-    collect = 2         # Collect until match, including the match
-    collect_drop = 3    # Collect until match, dropping the match
-    complete = 4        # Get opening grouper, collect until matching closing grouper
+    can          = 0    # Optional
+    can_drop     = 1    # Optional but drop the match
+    must         = 2    # Mandatory
+    must_drop    = 3    # Mandatory but drop the match
+    collect      = 4    # Collect until match, including the match
+    collect_drop = 5    # Collect until match, dropping the match
+    complete     = 6    # Get opening grouper, collect until matching closing grouper
 
     def __init__(self, name, structdef, tag=None, verbose=False):
         self.name = name
@@ -329,13 +331,14 @@ class StructParser():
                     retry = True
                 else:
                     consume(token)
-        elif ((do == self.must) and hit):
+        elif (((do == self.must) or (do == self.must_drop)) and hit):
             if verbose:
                 print(f"#{self.name}: [{len(self.struct)}] Hit on mandatory: {token}")
             if self.step():
                 retry = True
             else:
-                consume(token)
+                if (do == self.must):
+                    consume(token)
         elif do == self.collect:
             if verbose:
                 print(f"#{self.name}: [{len(self.struct)}] Collecting: {token}")
@@ -399,7 +402,7 @@ class StructParser():
             self.new()
         if retry:
             if verbose:
-                print(f"#{self.name}: R E T R Y")
+                print(f"#{self.name}: Retry")
             self.doParse(token, verbose=verbose)
         return
 
