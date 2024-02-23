@@ -257,12 +257,8 @@ class VerilogGrouper(Grouper):
     _port = (
         #   mandatory keyword input/output/inout
         ((TAG_KEYWORD, (KEYWORD_INPUT, KEYWORD_OUTPUT, KEYWORD_INOUT)), must, None),
-        #   mandatory whitespace
-        ((TAG_WHITESPACE, None), must, None),
         #   optional range
         (_range.copy(), can, None),
-        #   optional whitespace
-        ((TAG_WHITESPACE, None), can, None),
         #   mandatory signal name
         ((TAG_GENERIC, None), must, None),
         #   collect until reserved ';',',',')'
@@ -274,14 +270,10 @@ class VerilogGrouper(Grouper):
         # Tag, subtag, must/can, error if true
         #   mandatory keyword assign
         ((TAG_KEYWORD, KEYWORD_ASSIGN), must, None),
-        #   mandatory whitespace
-        ((TAG_WHITESPACE, None), must, None),
         #   mandatory signal name
         ((TAG_GENERIC, None), must, None),
         #   optional range
         (_range.copy(), can, None),
-        #   optional whitespace
-        ((TAG_WHITESPACE, None), can, None),
         #   mandatory reserved '='
         ((TAG_RESERVED, RESERVED_EQUAL), must, None),
         #   collect until reserved ';'
@@ -293,12 +285,8 @@ class VerilogGrouper(Grouper):
         # Tag, subtag, must/can, error if true
         #   mandatory keyword reg
         ((TAG_KEYWORD, KEYWORD_PARAMETER), must, None),
-        #   mandatory whitespace
-        ((TAG_WHITESPACE, None), must, None),
         #   optional range
         (_range.copy(), can, None),
-        #   optional whitespace
-        ((TAG_WHITESPACE, None), can, None),
         #   mandatory signal name
         ((TAG_GENERIC, None), must, None),
         #   collect until reserved ';',',',')'
@@ -311,8 +299,6 @@ class VerilogGrouper(Grouper):
     _moddec_open = (
         #   mandatory keyword module
         ((TAG_KEYWORD, KEYWORD_MODULE), must, None),
-        #   mandatory whitespace
-        ((TAG_WHITESPACE, None), must, None),
         #   mandatory module name
         ((TAG_GENERIC, None), must, None),
     )
@@ -320,8 +306,6 @@ class VerilogGrouper(Grouper):
     _initial_open = (
         #   mandatory keyword initial
         ((TAG_KEYWORD, KEYWORD_INITIAL), must, None),
-        #   optional whitespace
-        ((TAG_WHITESPACE, None), can, None),
         #   optional keyword begin
         ((TAG_KEYWORD, KEYWORD_BEGIN), can, None),
     )
@@ -330,22 +314,14 @@ class VerilogGrouper(Grouper):
     _always_at_open = (
         #   mandatory keyword always
         ((TAG_KEYWORD, KEYWORD_ALWAYS), must, None),
-        #   optional whitespace
-        ((TAG_WHITESPACE, None), can, None),
         #   mandatory reserved '@('
         ((TAG_RESERVED, RESERVED_ATPAREN_OPEN), must, None),
-        #   optional whitespace
-        ((TAG_WHITESPACE, None), can, None),
         #   mandatory keyword always
         ((TAG_KEYWORD, (KEYWORD_POSEDGE, KEYWORD_NEGEDGE)), must, None),
-        #   mandatory whitespace
-        ((TAG_WHITESPACE, None), must, None),
         #   mandatory clk name
         ((TAG_GENERIC, None), must, None),
         #   mandatory reserved ')'
         ((TAG_RESERVED, RESERVED_PAREN_CLOSE), must, None),
-        #   optional whitespace
-        ((TAG_WHITESPACE, None), can, None),
         #   optional keyword begin
         ((TAG_KEYWORD, KEYWORD_BEGIN), can, None),
     )
@@ -353,12 +329,8 @@ class VerilogGrouper(Grouper):
     _always_delay_open = (
         #   mandatory keyword always
         ((TAG_KEYWORD, KEYWORD_ALWAYS), must, None),
-        #   mandatory whitespace
-        ((TAG_WHITESPACE, None), must, None),
         #   optional delay value
         ((TAG_GENERIC, None), can, None),
-        #   optional whitespace
-        ((TAG_WHITESPACE, None), can, None),
         #   mandatory keyword begin
         ((TAG_KEYWORD, KEYWORD_BEGIN), must, None),
     )
@@ -366,12 +338,8 @@ class VerilogGrouper(Grouper):
     _if_open = (
         #   mandatory keyword if
         ((TAG_KEYWORD, KEYWORD_IF), must, None),
-        #   mandatory whitespace
-        ((TAG_WHITESPACE, None), must, None),
         #   complete from ( to )
         ((TAG_RESERVED, RESERVED_PAREN_OPEN), complete, None),
-        #   optional whitespace
-        ((TAG_WHITESPACE, None), can, None),
         #   optional keyword begin
         ((TAG_KEYWORD, KEYWORD_BEGIN), can, None),
     )
@@ -379,12 +347,8 @@ class VerilogGrouper(Grouper):
     _for_open = (
         #   mandatory keyword if
         ((TAG_KEYWORD, KEYWORD_FOR), must, None),
-        #   mandatory whitespace
-        ((TAG_WHITESPACE, None), must, None),
         #   complete from ( to )
         ((TAG_RESERVED, RESERVED_PAREN_OPEN), complete, None),
-        #   optional whitespace
-        ((TAG_WHITESPACE, None), can, None),
         #   optional keyword begin
         ((TAG_KEYWORD, KEYWORD_BEGIN), can, None),
     )
@@ -394,12 +358,8 @@ class VerilogGrouper(Grouper):
         ((TAG_RESERVED, RESERVED_PERIOD), must, None),
         #   mandatory port name
         ((TAG_GENERIC, None), must, None),
-        #   optional whitespace
-        ((TAG_WHITESPACE, None), can, None),
         #   complete from ( to )
         ((TAG_RESERVED, RESERVED_PAREN_OPEN), complete, None),
-        #   optional whitespace
-        ((TAG_WHITESPACE, None), can, None),
         #   mandatory reserved ',' or ')' but drop it
         ((TAG_RESERVED, (RESERVED_COMMA, RESERVED_PAREN_CLOSE)), must_drop, None),
     )
@@ -409,12 +369,8 @@ class VerilogGrouper(Grouper):
     _sync_assign = (
         #   mandatory signal value
         ((TAG_GENERIC, None), must, None),
-        #   optional whitespace
-        ((TAG_WHITESPACE, None), can, None),
         #   optional range
         (_range.copy(), can, None),
-        #   optional whitespace
-        ((TAG_WHITESPACE, None), can, None),
         #   mandatory reserved '=' or '<='
         ((TAG_RESERVED, (RESERVED_EQUAL, RESERVED_EQUAL_DELAYED)), must, None),
         #   collect until reserved ';'
@@ -424,8 +380,6 @@ class VerilogGrouper(Grouper):
     _modinst_open = (
         #   mandatory module name
         ((TAG_GENERIC, None), must, None),
-        #   optional whitespace
-        ((TAG_WHITESPACE, None), can, None),
         #   mandatory reserved '(' or '#(' but drop it
         ((TAG_RESERVED, (RESERVED_PAREN_OPEN, RESERVED_POUNDPAREN_OPEN)), must_drop, None),
     )
@@ -436,12 +390,8 @@ class VerilogGrouper(Grouper):
             # Tag, subtag, must/can, error if true
             #   mandatory keyword reg
             ((TAG_KEYWORD, keyword), cls.must, None),
-            #   mandatory whitespace
-            ((TAG_WHITESPACE, None), cls.must, None),
             #   optional range
             (cls._range.copy(), cls.can, None),
-            #   optional whitespace
-            ((TAG_WHITESPACE, None), cls.can, None),
             #   mandatory signal name
             ((TAG_GENERIC, None), cls.must, None),
             #   collect until reserved ';'
@@ -497,6 +447,7 @@ class VerilogGrouper(Grouper):
     def parseLayer1Pass(self, npass=0, verbose=False):
         skipTags = (
             MultiTag(TAG_COMMENT),
+            MultiTag(TAG_WHITESPACE),
         )
         if npass == 0:
             self.cs.copyPerspective("keywords", "layer1")
