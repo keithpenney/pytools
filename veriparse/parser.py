@@ -331,7 +331,9 @@ class StructParser():
                     retry = True
                 else:
                     consume(token)
-        elif (((do == self.must) or (do == self.must_drop)) and hit):
+        #elif ((do in (self.must,)) and hit):
+        elif ((do in (self.must, self.must_drop)) and hit):
+            #print(f"do = {do}")
             if verbose:
                 print(f"#{self.name}: [{len(self.struct)}] Hit on mandatory: {token}")
             if self.step():
@@ -355,15 +357,17 @@ class StructParser():
                     print(f"#{self.name}: [{len(self.struct)}] Collecting: {token}")
                 consume(token)
         elif do == self.complete:
+            #print(f"do = {do}")
             #if verbose:
             #    print(f"closing_tag = {closing_tag}")
             if not self.inmatch:
                 if hit:
-                    #print("COMPLETE HIT!")
+                    if verbose:
+                        print(f"#{self.name}: COMPLETE HIT!")
                     self.inmatch = True
                 else:
-                    #print(f"COMPLETE MISS! {tgt_tag} != {tag}")
-                    pass
+                    if verbose:
+                        print(f"#{self.name}: COMPLETE MISS! {tgt_tag} != {tag}")
             if self.inmatch:
                 if hit:
                     if verbose:
@@ -396,9 +400,7 @@ class StructParser():
             self.structs.append(self.struct)
             if verbose:
                 print(f"#{self.name}: " + "Parse {} completed: ".format(len(self.structs)), end="")
-                for token in self.struct:
-                    print(token.value, end="")
-                print()
+                print("".join([token.value for token in self.struct]))
             self.new()
         if retry:
             if verbose:
@@ -414,7 +416,9 @@ class StructParser():
 
 class Grouper():
     can = StructParser.can
+    can_drop = StructParser.can_drop
     must = StructParser.must
+    must_drop = StructParser.must_drop
     collect = StructParser.collect
     collect_drop = StructParser.collect_drop
     complete = StructParser.complete

@@ -5,6 +5,8 @@
 #   * Add handling of:
 #       * System calls/tasks
 #       * attributes (* foo=bar *)
+#
+# TODO - I need a fancier version of "complete" to match blocks starting with "begin" and ending with "end"
 
 # Hierarchical Perspectives:
 #   Level 0: comments, whitespace, strings, keywords, reserved chars, macros, generic
@@ -52,7 +54,8 @@ __tags__ = (
     "RESERVED_BRACKET_OPEN",
     "RESERVED_BRACKET_CLOSE",
     "RESERVED_COMMA",
-    "RESERVED_POUNDPAREN_OPEN",
+    "RESERVED_POUND",
+#    "RESERVED_POUNDPAREN_OPEN",
     "RESERVED_ATPAREN_OPEN",
     "RESERVED_PARENSTAR_OPEN",
     "RESERVED_PARENSTAR_CLOSE",
@@ -87,6 +90,7 @@ __tags__ = (
     "TAG_PORTS",
     "TAG_MODDEC",
     "TAG_MODINST",
+#    "TAG_MODINST_OPEN",
     "TAG_INITIAL",
     "TAG_ALWAYS",
     "TAG_IF",
@@ -172,7 +176,8 @@ reserved = {
     RESERVED_PERIOD: (".", "\."),
     RESERVED_PARENSTAR_OPEN: ("(*", "\(\*"),
     RESERVED_PARENSTAR_CLOSE: ("*)", "\*\)"),
-    RESERVED_POUNDPAREN_OPEN: ("#(", "#\("),
+    RESERVED_POUND: ("#", "#"),
+#    RESERVED_POUNDPAREN_OPEN: ("#(", "#\("),
     RESERVED_ATPAREN_OPEN: ("@(", "@\("),
     RESERVED_PAREN_OPEN: ("(", "\("),
     RESERVED_PAREN_CLOSE: (")", "\)"),
@@ -202,12 +207,17 @@ COMMENT_SINGLE_LINE = "//"
 COMMENT_MULTI_LINE_OPEN = "/*"
 COMMENT_MULTI_LINE_CLOSE = "*/"
 
+
+# TODO FIXME! The poundparen "complete" is not working because it expects "#(" to increase the group level and ")" to decrease it,
+#               so it ignores "(" in the meantime
 _grouping_pairs = {
     '[': ']',
     '(': ')',
+    '#(': ')', # FIXME!
     '{': '}',
     '(*': '*)'
 }
+
 def get_closer_tag(tag):
     """Clobber me (for customization)"""
     ct = []
@@ -247,6 +257,13 @@ class VerilogGrouper(Grouper):
     _range = StructDef((
         #   complete open reserved '[' with its mating close reserved ']'
         ((TAG_RESERVED, RESERVED_BRACKET_OPEN), complete, None),
+    ))
+
+    _param_block = StructDef((
+        #   mandatory reserved '#'
+        ((TAG_RESERVED, RESERVED_POUND), must, None),
+        #   complete open reserved '(' with its mating close reserved ')'
+        ((TAG_RESERVED, RESERVED_PAREN_OPEN), complete, None),
     ))
 
     _attribute = (
@@ -377,11 +394,29 @@ class VerilogGrouper(Grouper):
         ((TAG_RESERVED, RESERVED_SEMICOLON), collect, None),
     )
 
-    _modinst_open = (
+    # This doesn't help
+    #_modinst_open = (
+    #    #   mandatory module name
+    #    ((TAG_GENERIC, None), must, None),
+    #    #   mandatory reserved '(' or '#(' but drop it
+    #    ((TAG_RESERVED, (RESERVED_PAREN_OPEN, RESERVED_POUND)), must_drop, None),
+    #)
+
+    # ============= LAYER 2 ===================
+    # TODO - I need a "repeat" function
+    _modinst = (
+        #   mandatory module instantiation opening line
+        #((TAG_BLOCK, TAG_MODINST_OPEN), must, None),
         #   mandatory module name
         ((TAG_GENERIC, None), must, None),
-        #   mandatory reserved '(' or '#(' but drop it
-        ((TAG_RESERVED, (RESERVED_PAREN_OPEN, RESERVED_POUNDPAREN_OPEN)), must_drop, None),
+        #   optional parameter block
+        (_param_block.copy(), can, None),
+        #((TAG_RESERVED, RESERVED_POUNDPAREN_OPEN), complete, None),
+        #   mandatory instance name
+        #((TAG_BLOCK, TAG_MODINST_OPEN), must, None),
+        ((TAG_GENERIC, None), must, None),
+        #   complete open reserved '(' with its mating close reserved ')'
+        ((TAG_RESERVED, RESERVED_PAREN_OPEN), complete, None),
     )
 
     @classmethod
@@ -418,13 +453,13 @@ class VerilogGrouper(Grouper):
         add("port",             self._port,             tag=(TAG_STATEMENT, TAG_PORTS), verbose=False)
         add("paramdec",         self._paramdec,         tag=(TAG_STATEMENT, TAG_PARAMETERS))
         add("localparamdec",    self._localparamdec,    tag=(TAG_STATEMENT, TAG_LOCALPARAMS), verbose=False)
-        add("moddec_open",      self._moddec_open,      tag=(TAG_BLOCK, TAG_MODDEC))
         add("initial_open",     self._initial_open,     tag=(TAG_BLOCK, TAG_INITIAL))
         add("always_at_open",   self._always_at_open,   tag=(TAG_BLOCK, TAG_ALWAYS))
         add("always_delay_open",self._always_delay_open,tag=(TAG_BLOCK, TAG_ALWAYS))
         add("if_open",          self._if_open,          tag=(TAG_BLOCK, TAG_IF))
         add("for_open",         self._for_open,         tag=(TAG_BLOCK, TAG_FOR))
         add("portmap",          self._portmap,          tag=(TAG_STATEMENT, TAG_PORTMAP))
+        #add("moddec_open",      self._moddec_open,      tag=(TAG_BLOCK, TAG_MODDEC))
 
         #self._verboseParsers = ["assign", "port"]
         return
@@ -435,14 +470,16 @@ class VerilogGrouper(Grouper):
             self.structparsers.append(StructParser(s, struct, tag=tag, verbose=verbose))
 
         add("sync_assign", self._sync_assign, tag=(TAG_STATEMENT, TAG_ASSIGN_SYNC), verbose=False)
-        add("modinst_open", self._modinst_open, tag=(TAG_BLOCK, TAG_MODINST), verbose=True)
+        #add("modinst_open", self._modinst_open, tag=(TAG_BLOCK, TAG_MODINST_OPEN), verbose=True)
 
         #self._verboseParsers = []
         return
 
     def parseLayer1(self, verbose=False):
-        self.parseLayer1Pass(0, verbose=verbose)
-        self.parseLayer1Pass(1, verbose=verbose)
+        sd = self.parseLayer1Pass(0, verbose=verbose)
+        sd.update(self.parseLayer1Pass(1, verbose=verbose))
+        self.structLayer1 = sd
+        return
 
     def parseLayer1Pass(self, npass=0, verbose=False):
         skipTags = (
@@ -474,6 +511,52 @@ class VerilogGrouper(Grouper):
                     pline, pchar = self.cs.charToLineChar(stop)
                     print(f"Tagging line {sline}[{schar}] to line {pline}[{pchar}] with {_tagstr(tag)}")
                 self.cs.tag(slice(start, stop), tag)
+        return structdict
+
+    def parseLayer2(self, verbose=False):
+        self.structparsers = []
+        tag=None
+        def add(s, struct, verbose=False, tag=tag):
+            self.structparsers.append(StructParser(s, struct, tag=tag, verbose=verbose))
+
+        add("modinst", self._modinst, tag=(TAG_BLOCK, TAG_MODINST), verbose=True)
+
+        skipTags = (
+            MultiTag(TAG_COMMENT),
+            MultiTag(TAG_WHITESPACE),
+        )
+        self.cs.copyPerspective("layer1", "layer2")
+        structdict = self.parseStructure(skipTags=skipTags)
+        self.cs.setActivePerspective("layer2")
+        for name, (tag, structs) in structdict.items():
+            if verbose and (len(structs) == 0):
+                print(f"{name} yielded no structs")
+            for struct in structs:
+                if len(struct) == 0:
+                    continue
+                #for token in struct:
+                #    print(token.value, end="")
+                #print()
+                start = struct[0].start
+                stop = struct[-1].stop
+                if verbose:
+                    sline, schar = self.cs.charToLineChar(start)
+                    pline, pchar = self.cs.charToLineChar(stop)
+                    print(f"Tagging line {sline}[{schar}] to line {pline}[{pchar}] with {_tagstr(tag)}")
+                self.cs.tag(slice(start, stop), tag)
+        self.structLayer2 = structdict
+        return
+
+    def printLayer2(self):
+        self.cs.setActivePerspective("layer2")
+        _colormap = {
+            MultiTag(TAG_COMMENT): Perspective.COLOR_LIGHTCYAN_EX,
+            MultiTag(TAG_BLOCK, TAG_MODINST): Perspective.COLOR_RED,
+            MultiTag(TAG_MACRO): Perspective.COLOR_YELLOW,
+            MultiTag(TAG_RESERVED): Perspective.COLOR_BLUE,
+        }
+        self.cs.setColorMap(_colormap)
+        self.cs.printColor()
         return
 
     def printLayer1(self):
@@ -503,6 +586,18 @@ class VerilogGrouper(Grouper):
         }
         self.cs.setColorMap(_colormap)
         self.cs.printColor()
+        return
+
+    def parse(self, vstr):
+        self.tokenize(vstr)
+        # This is helpful to clobber
+        constr.charToLineChar = self.cs.charToLineChar
+        #self.printStructDict(structdict)
+        self.parseLayer1(verbose=False)
+        self.parseLayer2(verbose=False)
+        #self.printLayer0()
+        #self.printLayer1()
+        #self.printLayer2()
         return
 
 def test_MultiTag():
@@ -549,13 +644,13 @@ def parseFile():
         keywords=TAG_KEYWORD
     )
     gp = VerilogGrouper(reserved=_reserved_sorted, keywords=keywords, macros=macros, tagmap=tagmap)
-    gp.tokenize(instr)
-    # This is helpful to clobber
-    constr.charToLineChar = gp.cs.charToLineChar
-    #gp.printStructDict(structdict)
-    gp.parseLayer1(verbose=False)
-    #gp.printLayer0()
+    gp.parse(instr)
+    print("\n==================== LAYER 0 =====================")
+    gp.printLayer0()
+    print("\n==================== LAYER 1 =====================")
     gp.printLayer1()
+    print("\n==================== LAYER 2 =====================")
+    gp.printLayer2()
     return
 
 if __name__ == "__main__":
