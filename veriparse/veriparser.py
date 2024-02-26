@@ -76,9 +76,11 @@ __tags__ = (
     "TAG_MACRO",
 
     "TAG_STATEMENT",
+    "TAG_BLOCK_OPEN",
     "TAG_BLOCK",
     "TAG_MODULEDECLARATION",
     "TAG_ATTRIBUTE",
+    "TAG_FIXED_DELAY",
 
     "TAG_ASSIGNS",
     "TAG_ASSIGN_SYNC",
@@ -91,6 +93,7 @@ __tags__ = (
     "TAG_MODDEC",
     "TAG_MODINST",
 #    "TAG_MODINST_OPEN",
+    "TAG_SEQUENTIAL",
     "TAG_INITIAL",
     "TAG_ALWAYS",
     "TAG_IF",
@@ -218,18 +221,35 @@ _grouping_pairs = {
     '(*': '*)'
 }
 
-def get_closer_tag(tag):
+_keyword_grouping_pairs = {
+    "begin" : "end",
+}
+
+def _get_closer_tag(tag, keyword=False):
     """Clobber me (for customization)"""
+    if keyword:
+        grouper = _keyword_grouping_pairs
+        dct = keywords
+    else:
+        grouper = _grouping_pairs
+        dct = reserved
     ct = []
     closer = False
     for t in tag:
-        rg = reserved.get(t)
+        rg = dct.get(t)
         if rg is not None:
-            char, enc = rg
-            _closerChar = _grouping_pairs.get(char, None)
+            if keyword:
+                char = rg
+            else:
+                char, enc = rg
+            _closerChar = grouper.get(char, None)
             _closerTag = None
-            for _t, _chars in reserved.items():
-                if _closerChar == _chars[0]:
+            for _t, _chars in dct.items():
+                if keyword:
+                    _char = _chars
+                else:
+                    _char = _chars[0]
+                if _closerChar == _char:
                     _closerTag = _t
                     break
             if _closerTag is not None:
@@ -243,11 +263,18 @@ def get_closer_tag(tag):
         return MultiTag(*ct)
     return None
 
+def get_closer_tag(tag):
+    rval = _get_closer_tag(tag, keyword=False)
+    if rval is not None:
+        return rval
+    return _get_closer_tag(tag, keyword=True)
+
 # TODO FIXME HACK ALERT. There has got to be a better way to associate opener/closer tags
 parser.get_closer_tag = get_closer_tag
 
 class VerilogGrouper(Grouper):
     can = StructParser.can
+    can_drop = StructParser.can_drop
     must = StructParser.must
     must_drop = StructParser.must_drop
     collect = StructParser.collect
@@ -324,7 +351,7 @@ class VerilogGrouper(Grouper):
         #   mandatory keyword initial
         ((TAG_KEYWORD, KEYWORD_INITIAL), must, None),
         #   optional keyword begin
-        ((TAG_KEYWORD, KEYWORD_BEGIN), can, None),
+        ((TAG_KEYWORD, KEYWORD_BEGIN), can_drop, None),
     )
 
     # always @(posedge clk) begin
@@ -340,16 +367,14 @@ class VerilogGrouper(Grouper):
         #   mandatory reserved ')'
         ((TAG_RESERVED, RESERVED_PAREN_CLOSE), must, None),
         #   optional keyword begin
-        ((TAG_KEYWORD, KEYWORD_BEGIN), can, None),
+        ((TAG_KEYWORD, KEYWORD_BEGIN), can_drop, None),
     )
 
-    _always_delay_open = (
-        #   mandatory keyword always
-        ((TAG_KEYWORD, KEYWORD_ALWAYS), must, None),
-        #   optional delay value
-        ((TAG_GENERIC, None), can, None),
-        #   mandatory keyword begin
-        ((TAG_KEYWORD, KEYWORD_BEGIN), must, None),
+    _delay_value = (
+        #   mandatory reserved '#'
+        ((TAG_RESERVED, RESERVED_POUND), must, None),
+        #   mandatory delay value
+        ((TAG_GENERIC, None), must, None),
     )
 
     _if_open = (
@@ -358,7 +383,7 @@ class VerilogGrouper(Grouper):
         #   complete from ( to )
         ((TAG_RESERVED, RESERVED_PAREN_OPEN), complete, None),
         #   optional keyword begin
-        ((TAG_KEYWORD, KEYWORD_BEGIN), can, None),
+        ((TAG_KEYWORD, KEYWORD_BEGIN), can_drop, None),
     )
 
     _for_open = (
@@ -367,7 +392,7 @@ class VerilogGrouper(Grouper):
         #   complete from ( to )
         ((TAG_RESERVED, RESERVED_PAREN_OPEN), complete, None),
         #   optional keyword begin
-        ((TAG_KEYWORD, KEYWORD_BEGIN), can, None),
+        ((TAG_KEYWORD, KEYWORD_BEGIN), can_drop, None),
     )
 
     _portmap = (
@@ -382,6 +407,22 @@ class VerilogGrouper(Grouper):
     )
 
     # ============= LAYER 1 ===================
+
+    _always_delay_open = (
+        #   mandatory keyword always
+        ((TAG_KEYWORD, KEYWORD_ALWAYS), must, None),
+        #   optional delay value
+        ((TAG_FIXED_DELAY, None), must, None),
+        #   optional keyword begin
+        ((TAG_KEYWORD, KEYWORD_BEGIN), can_drop, None),
+    )
+
+    _always_open = (
+        #   mandatory keyword always
+        ((TAG_KEYWORD, KEYWORD_ALWAYS), must, None),
+        #   mandatory keyword begin
+        ((TAG_KEYWORD, KEYWORD_BEGIN), must_drop, None),
+    )
 
     _sync_assign = (
         #   mandatory signal value
@@ -419,6 +460,13 @@ class VerilogGrouper(Grouper):
         ((TAG_RESERVED, RESERVED_PAREN_OPEN), complete, None),
     )
 
+    _top_block = (
+        #   mandatory block opening of any kind
+        ((TAG_BLOCK_OPEN, None), must, None),
+        #   complete from "begin" to matching "end"
+        ((TAG_KEYWORD, KEYWORD_BEGIN), complete, None),
+    )
+
     @classmethod
     def _dec(cls, keyword):
         _structdef = [
@@ -449,15 +497,15 @@ class VerilogGrouper(Grouper):
         add("regdec",           self._regdec,           tag=(TAG_STATEMENT, TAG_REGDECS))
         add("wiredec",          self._wiredec,          tag=(TAG_STATEMENT, TAG_WIREDECS))
         add("attribute",        self._attribute,        tag=(TAG_ATTRIBUTE, None))
+        add("delay_value",      self._delay_value,      tag=(TAG_FIXED_DELAY, None))
         add("assign",           self._assign,           tag=(TAG_STATEMENT, TAG_ASSIGNS), verbose=False)
         add("port",             self._port,             tag=(TAG_STATEMENT, TAG_PORTS), verbose=False)
         add("paramdec",         self._paramdec,         tag=(TAG_STATEMENT, TAG_PARAMETERS))
         add("localparamdec",    self._localparamdec,    tag=(TAG_STATEMENT, TAG_LOCALPARAMS), verbose=False)
-        add("initial_open",     self._initial_open,     tag=(TAG_BLOCK, TAG_INITIAL))
-        add("always_at_open",   self._always_at_open,   tag=(TAG_BLOCK, TAG_ALWAYS))
-        add("always_delay_open",self._always_delay_open,tag=(TAG_BLOCK, TAG_ALWAYS))
-        add("if_open",          self._if_open,          tag=(TAG_BLOCK, TAG_IF))
-        add("for_open",         self._for_open,         tag=(TAG_BLOCK, TAG_FOR))
+        add("initial_open",     self._initial_open,     tag=(TAG_BLOCK_OPEN, TAG_INITIAL))
+        add("always_at_open",   self._always_at_open,   tag=(TAG_BLOCK_OPEN, TAG_ALWAYS))
+        add("if_open",          self._if_open,          tag=(TAG_BLOCK_OPEN, TAG_IF))
+        add("for_open",         self._for_open,         tag=(TAG_BLOCK_OPEN, TAG_FOR))
         add("portmap",          self._portmap,          tag=(TAG_STATEMENT, TAG_PORTMAP))
         #add("moddec_open",      self._moddec_open,      tag=(TAG_BLOCK, TAG_MODDEC))
 
@@ -470,6 +518,8 @@ class VerilogGrouper(Grouper):
             self.structparsers.append(StructParser(s, struct, tag=tag, verbose=verbose))
 
         add("sync_assign", self._sync_assign, tag=(TAG_STATEMENT, TAG_ASSIGN_SYNC), verbose=False)
+        add("always_delay_open",self._always_delay_open,tag=(TAG_BLOCK_OPEN, TAG_ALWAYS))
+        add("always_open",self._always_open,tag=(TAG_BLOCK_OPEN, TAG_ALWAYS))
         #add("modinst_open", self._modinst_open, tag=(TAG_BLOCK, TAG_MODINST_OPEN), verbose=True)
 
         #self._verboseParsers = []
@@ -519,7 +569,8 @@ class VerilogGrouper(Grouper):
         def add(s, struct, verbose=False, tag=tag):
             self.structparsers.append(StructParser(s, struct, tag=tag, verbose=verbose))
 
-        add("modinst", self._modinst, tag=(TAG_BLOCK, TAG_MODINST), verbose=True)
+        add("modinst", self._modinst, tag=(TAG_BLOCK, TAG_MODINST), verbose=False)
+        add("top_block", self._top_block, tag=(TAG_BLOCK, TAG_SEQUENTIAL), verbose=True)
 
         skipTags = (
             MultiTag(TAG_COMMENT),
@@ -552,6 +603,7 @@ class VerilogGrouper(Grouper):
         _colormap = {
             MultiTag(TAG_COMMENT): Perspective.COLOR_LIGHTCYAN_EX,
             MultiTag(TAG_BLOCK, TAG_MODINST): Perspective.COLOR_RED,
+            MultiTag(TAG_BLOCK, TAG_SEQUENTIAL): Perspective.COLOR_GREEN,
             MultiTag(TAG_MACRO): Perspective.COLOR_YELLOW,
             MultiTag(TAG_RESERVED): Perspective.COLOR_BLUE,
         }
@@ -565,7 +617,7 @@ class VerilogGrouper(Grouper):
             MultiTag(TAG_COMMENT): Perspective.COLOR_LIGHTCYAN_EX,
             MultiTag(TAG_STATEMENT): Perspective.COLOR_RED,
             MultiTag(TAG_ATTRIBUTE): Perspective.COLOR_GREEN,
-            MultiTag(TAG_BLOCK): Perspective.COLOR_MAGENTA,
+            MultiTag(TAG_BLOCK_OPEN): Perspective.COLOR_MAGENTA,
             MultiTag(TAG_MACRO): Perspective.COLOR_YELLOW,
             MultiTag(TAG_KEYWORD): Perspective.COLOR_LIGHTGREEN_EX,
             MultiTag(TAG_STRING): Perspective.COLOR_BLUE,
@@ -645,10 +697,10 @@ def parseFile():
     )
     gp = VerilogGrouper(reserved=_reserved_sorted, keywords=keywords, macros=macros, tagmap=tagmap)
     gp.parse(instr)
-    print("\n==================== LAYER 0 =====================")
-    gp.printLayer0()
-    print("\n==================== LAYER 1 =====================")
-    gp.printLayer1()
+    #print("\n==================== LAYER 0 =====================")
+    #gp.printLayer0()
+    #print("\n==================== LAYER 1 =====================")
+    #gp.printLayer1()
     print("\n==================== LAYER 2 =====================")
     gp.printLayer2()
     return

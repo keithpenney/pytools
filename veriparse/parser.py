@@ -305,7 +305,8 @@ class StructParser():
             except AttributeError:
                 print(f"#{self.name}: Why am I looking for a closer on tgt_tag {tgt_tag}? {self.structdef[len(self.struct)]}")
             hit_close = (closing_tag == tag)
-            #print(f"closing_tag = {closing_tag} == {tag} ? {closing_tag == tag}")
+            if verbose:
+                print(f"#{self.name}: closing_tag = {closing_tag} == {tag} ? {closing_tag == tag}")
         else:
             hit_close = False
         if verbose:
@@ -315,7 +316,7 @@ class StructParser():
         if ef is not None:
             if (not hit) and (not hit_close) and ef(token):
                 raise SyntaxError(f"({self.name}) Syntax error parsing token: {token}")
-        if (do == self.can):
+        if do in (self.can, self.can_drop):
             if not hit:
                 if verbose:
                     print(f"#{self.name}: [{len(self.struct)}] Pass on optional: {token}")
@@ -330,7 +331,8 @@ class StructParser():
                 if self.step():
                     retry = True
                 else:
-                    consume(token)
+                    if do == self.can:
+                        consume(token)
         #elif ((do in (self.must,)) and hit):
         elif ((do in (self.must, self.must_drop)) and hit):
             #print(f"do = {do}")
