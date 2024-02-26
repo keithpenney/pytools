@@ -615,13 +615,14 @@ class VerilogGrouper(Grouper):
         self.cs.setActivePerspective("layer1")
         _colormap = {
             MultiTag(TAG_COMMENT): Perspective.COLOR_LIGHTCYAN_EX,
+            MultiTag(TAG_FIXED_DELAY): Perspective.COLOR_YELLOW,
             MultiTag(TAG_STATEMENT): Perspective.COLOR_RED,
             MultiTag(TAG_ATTRIBUTE): Perspective.COLOR_GREEN,
             MultiTag(TAG_BLOCK_OPEN): Perspective.COLOR_MAGENTA,
             MultiTag(TAG_MACRO): Perspective.COLOR_YELLOW,
             MultiTag(TAG_KEYWORD): Perspective.COLOR_LIGHTGREEN_EX,
             MultiTag(TAG_STRING): Perspective.COLOR_BLUE,
-            MultiTag(TAG_RESERVED): Perspective.COLOR_BLUE,
+            MultiTag(TAG_RESERVED): Perspective.COLOR_LIGHTMAGENTA_EX,
         }
         self.cs.setColorMap(_colormap)
         self.cs.printColor()
@@ -697,10 +698,10 @@ def parseFile():
     )
     gp = VerilogGrouper(reserved=_reserved_sorted, keywords=keywords, macros=macros, tagmap=tagmap)
     gp.parse(instr)
-    #print("\n==================== LAYER 0 =====================")
-    #gp.printLayer0()
-    #print("\n==================== LAYER 1 =====================")
-    #gp.printLayer1()
+    print("\n==================== LAYER 0 =====================")
+    gp.printLayer0()
+    print("\n==================== LAYER 1 =====================")
+    gp.printLayer1()
     print("\n==================== LAYER 2 =====================")
     gp.printLayer2()
     return
