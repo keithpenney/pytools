@@ -201,11 +201,26 @@ class Perspective():
         return
 
     def getTagAtIndex(self, index):
-        for tags in self._map:
-            _start, _stop, _label = tags
+        for tag in self._map:
+            _start, _stop, _label = tag
             if (index >= _start) and (index < _stop):
                 return _label
         return None
+
+    def getTagsSpanning(self, start, stop):
+        _tags = []
+        for tag in self._map:
+            _start, _stop, _label = tag
+            if start >= _start:
+                if start < _stop:
+                    _tags.append(tag)
+            else:
+                if stop > _start:
+                    _tags.append(tag)
+                else:
+                    # Break once stop <= _start
+                    break
+        return _tags
 
     def getTags(self):
         td = self._mkTagDict()
@@ -434,6 +449,14 @@ class ContextualString():
             return StringToken(self._value[start:stop], label, start, stop)
         else:
             raise StopIteration
+
+    def getTokensSpanning(self, start, stop):
+        _tokens = []
+        tags = self._activeGetPerspective.getTagsSpanning(start, stop)
+        for tag in tags:
+            start, stop, label = tag
+            _tokens.append(StringToken(self._value[start:stop], label, start, stop))
+        return _tokens
 
     def charToLineChar(self, nchar):
         for nline in range(len(self._lines)):

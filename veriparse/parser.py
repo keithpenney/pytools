@@ -493,6 +493,16 @@ class Grouper():
                 print()
         return
 
+    def projectLayer0(self, tokens):
+        _tokens = []
+        psp = self.cs.getActiveGetPerspective()
+        self.cs.setActiveGetPerspective("keywords")
+        for token in tokens:
+            l0tokens = self.cs.getTokensSpanning(token.start, token.stop)
+            _tokens.extend(l0tokens)
+        self.cs.setActiveGetPerspective(psp)
+        return _tokens
+
 
 class TagMap():
     comments = None

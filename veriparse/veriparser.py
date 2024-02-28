@@ -653,9 +653,199 @@ class VerilogGrouper(Grouper):
         #self.printLayer2()
         return
 
-def test_MultiTag():
-    mt_keyword_reg = MultiTag(TAG_KEYWORD, keyword)
-    return
+    def unpack(self):
+        for name, (tag, structs) in self.structLayer2.items():
+            if tag == MultiTag(TAG_BLOCK, TAG_MODINST):
+                for struct in structs:
+                    if len(struct) == 0:
+                        print("Skipping empty struct")
+                        continue
+                    modname = struct[0].value
+                    instname = None
+                    parammap = []
+                    portmap = []
+                    hasparams = False
+                    inparams = False
+                    inports = False
+                    print(f"Unpacking module instantiation: {name}")
+                    grouplevel = 0
+                    for token in struct[1:]:
+                        #print(f"Unpacking: {token.value}")
+                        if token.tag == MultiTag(TAG_GENERIC):
+                            instname = token.value
+                        elif token.tag == MultiTag(TAG_RESERVED, RESERVED_POUND):
+                            hasparams = True
+                        elif token.tag == MultiTag(TAG_RESERVED, RESERVED_PAREN_OPEN):
+                            if grouplevel == 0:
+                                if hasparams:
+                                    inparams = True
+                                else:
+                                    inports = True
+                            #print("grouplevel {} -> {}".format(grouplevel, grouplevel + 1))
+                            grouplevel += 1
+                        elif token.tag == MultiTag(TAG_RESERVED, RESERVED_PAREN_CLOSE):
+                            #print("grouplevel {} -> {}".format(grouplevel, grouplevel - 1))
+                            grouplevel -= 1
+                        if grouplevel == 0:
+                            if inparams:
+                                inparams = False
+                                hasparams = False # Done with parameters
+                            if inports:
+                                inports = False
+                        if inports:
+                            portmap.append(token)
+                        elif inparams:
+                            parammap.append(token)
+                    parammap = self.projectLayer0(parammap)
+                    portmap = self.projectLayer0(portmap)
+                    modinst = _ModuleInstantiationHelper(modname, instname, parammap, portmap)
+
+
+class _ModuleInstantiationHelper():
+    def __init__(self, modname, instname, parammap, portmap):
+        #print(f"modname = {modname}")
+        #print(f"instname = {instname}")
+        #print("parammap = {}".format("\n  ".join([str(token) for token in parammap])))
+        #print("portmap = {}".format("\n  ".join([str(token) for token in portmap])))
+        self.modname = modname
+        self.instname = instname
+        self._parammap = parammap
+        self._portmap = portmap
+        self.parse()
+        print(self)
+
+    def get(self):
+        return ModuleInstantiation(self.modname, self.instname, self.paramMap, self.portMap)
+
+    def parse(self):
+        self.paramMap = self._parseParamMap(self._parammap)
+        self.portMap = self._parsePortMap(self._portmap)
+        return
+
+    def __repr__(self):
+        return self.__str__()
+
+    def __str__(self):
+        ll = [
+            "_ModuleInstantiationHelper():",
+            "  instance {} of module {}".format(self.instname, self.modname),
+        ]
+        if len(self.paramMap) > 0:
+            ll.append("  Param Map")
+            for pname, pval in self.paramMap:
+                ll.append("    .{}({})".format(pname, pval))
+        if len(self.portMap) > 0:
+            ll.append("  Port Map")
+            for pname, pval in self.portMap:
+                ll.append("    .{}({})".format(pname, pval))
+        return "\n".join(ll)
+
+    @classmethod
+    def _parseParamMap(cls, tokens):
+        return cls._parsePortMap(tokens)
+
+    @classmethod
+    def _parsePortMap(cls, tokens):
+        _map = []
+        if len(tokens) == 0:
+            return _map
+        _next = 0
+        _port = 1
+        _sig = 2
+        portname = None
+        signame = None
+        grouplevel = 0
+        for token in tokens:
+            if token.tag == MultiTag(TAG_RESERVED, RESERVED_PERIOD):
+                _next = _port
+            elif token.tag == MultiTag(TAG_RESERVED, RESERVED_PAREN_OPEN):
+                if grouplevel == 1:
+                    _next = _sig
+                grouplevel += 1
+                #print(f"(+) grouplevel = {grouplevel}")
+            elif token.tag == MultiTag(TAG_RESERVED, RESERVED_PAREN_CLOSE):
+                grouplevel -= 1
+                #print(f"(-) grouplevel = {grouplevel}")
+            else:
+                if _next == _port:
+                    portname = token.value
+                elif _next == _sig:
+                    signame = token.value
+                    _map.append((portname, signame))
+                    portname = None
+                    signame = None
+                _next = 0
+        return _map
+
+    @staticmethod
+    def _parsePortDec(line):
+        # Handle two types:
+        #   1. Positional
+        #       foo
+        #       bar[4:0]
+        #       8'ha5
+        #   2. Named
+        #       .foo(foo)
+        #       .foo(bar[4:0])
+        #       .foo(8'ha5)
+        line = line.strip()
+        restr = "\.([^(]+)\((.+)\)"
+        _match = re.match(restr, line)
+        if _match:
+            # Named type
+            name, value = _match.groups()
+        else:
+            # Positional type
+            name = ""
+            value = line
+        return (name, value)
+
+    @staticmethod
+    def _splitByCommas(line):
+        return Tokenizer._rangesByString(line, instr=",", outstr=",", respect_quotes=True, respect_parens=True,
+                        allow_escape=True, max_splits=0, start_in=False, verbose=False)
+
+
+class ModuleInstantiation():
+    def __init__(self, modname, instname, parammap, portmap):
+        self.modname = modname
+        self.instname = instname
+        self.paramMap = parammap
+        self.portMap = portmap
+
+    def __str__(self):
+        ll = [
+            "ModuleInstantiation():",
+            "  instance {} of module {}".format(self.instname, self.modname),
+        ]
+        if len(self.paramMap) > 0:
+            ll.append("  Param Map")
+            for pname, pval in self.paramMap:
+                ll.append("    .{}({})".format(pname, pval))
+        if len(self.portMap) > 0:
+            ll.append("  Port Map")
+            for pname, pval in self.portMap:
+                ll.append("    .{}({})".format(pname, pval))
+        return "\n".join(ll)
+
+    def getPortConnection(self, portName=None, index=None):
+        if portName is not None:
+            for name, val in self.portMap:
+                if portName == name:
+                    return val
+        if index is not None and index < len(self.portMap):
+            return self.portMap[index][1]
+        return None
+
+    def getParamValue(self, paramName=None, index=None):
+        if paramName is not None:
+            for name, val in self.paramMap:
+                if paramName == name:
+                    return val
+        if index is not None and index < len(self.paramMap):
+            return self.paramMap[index][1]
+        return None
+
 
 def test_GrouperParseAssign():
     goods = [
@@ -704,6 +894,7 @@ def parseFile():
     gp.printLayer1()
     print("\n==================== LAYER 2 =====================")
     gp.printLayer2()
+    gp.unpack()
     return
 
 if __name__ == "__main__":
