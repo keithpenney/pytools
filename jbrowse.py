@@ -22,6 +22,53 @@ def strDict(_dict, depth=-1):
     return '\n'.join(l)
 
 
+class DictBrowser():
+    def __init__(self, d):
+        self._dict = d
+        self._dicts = [d]
+
+    def _strToDepth(self, _dict, depth=0, indent=0):
+        """RECURSIVE"""
+        if depth == 0:
+            return []
+        l = []
+        sindent = " "*indent
+        for key, val in _dict.items():
+            if hasattr(val, 'keys'):
+                l.append(f"{sindent}{key} : dict size {len(val)}")
+                l.extend(self._strToDepth(val, depth-1, indent+2))
+            else:
+                l.append(f"{sindent}{key} : {val}")
+        return l
+
+    def strToDepth(self, depth=0, partSelect=None):
+        _d = self.selectPart(partSelect)
+        l = ["DictBrowser()"]
+        l.extend(self._strToDepth(_d, depth, indent=2))
+        return '\n'.join(l)
+
+    def __str__(self):
+        if self._dicts[0] == None:
+            return "DictBrowser(Uninitialized)"
+        return self.strToDepth(1)
+
+    def __repr__(self):
+        return self.__str__()
+
+    def selectPart(self, partSelect = None):
+        _d = self._dict
+        if partSelect is not None:
+            parts = partSelect.split('.')
+            for nselect in range(len(parts)):
+                select = parts[nselect]
+                for key, val in _d.items():
+                    if key == select:
+                        _d = val
+        if not isinstance(_d, dict):
+            _d = self._dict
+        return _d
+
+
 class JSONParser():
     # Helper values
     LINETYPE_PARAM = 0

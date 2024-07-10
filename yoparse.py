@@ -5,6 +5,191 @@
 import os
 import subprocess
 import json
+import re
+
+def srcParse(s):
+    # FILEPATH:LINESTART.CHARSTART-LINEEND.CHAREND
+    reYoSrc = "\A([^:]+):(\d+).(\d+)-(\d+).(\d+)"
+    _match = re.match(reYoSrc, s)
+    if not _match:
+        return None
+    filepath, linestart, charstart, lineend, charend = _match.groups()
+    return (filepath, int(linestart), int(charstart), int(lineend), int(charend))
+
+
+def ismodule(s):
+    restr = "^\$(\w+)\$"
+    _match = re.search(restr, s)
+    if _match:
+        yotype = _match.groups()[0]
+        if yotype == "paramod":
+            # all other yosys magic should be ignored
+            return True
+    else:
+        # If it gets here, it's probably a module
+        return True
+    return False
+
+
+def get_modname(s):
+    restr = r"^\$(\w+)\$([0-9a-fA-F]+)\\(\w+)"
+    _match = re.search(restr, s)
+    if _match:
+        modname = _match.groups()[2]
+        return modname
+    return s
+
+
+def get_value(bitlist):
+    val = 0
+    for n in range(len(bitlist)):
+        if bitlist[n] == '1':
+            val |= 1 << n
+    return val
+
+
+def getUnparsedWidth(source):
+    """Get the width of a net as a unparsed string (i.e. however it is declared in source)
+    The 'source' arg should come directly from the 'src' attribute of a given net
+    and describes the location in the source code where the net is defined."""
+    _range = getUnparsedWidthRange(source)
+    if _range is not None:
+        # Assume _range[1] is always '0'
+        return "{}+1".format(_range[0])
+    return None
+
+
+def getUnparsedWidthAndDepthRange(source):
+    """A convenience method to do both getUnparsedWidthRange() and
+    getUnparsedDepthRange() with a single file access.
+    Returns (getUnparsedWidthRange(), getUnparsedDepthRange())"""
+    snippet, offset = _getSourceSnippet(source)
+    _ww = _getUnparsedWidthRange(snippet, offset)
+    _dd = _getUnparsedDepthRange(snippet, offset)
+    return (_ww, _dd)
+
+
+def getUnparsedWidthRange(source):
+    """Get the range of a net (wire/reg) as an unparsed string (i.e. however it is
+    declared in source).
+    Returns ('0', '0') if keyword 'wire' or 'reg' is encountered (walking backward)
+    before a range spec, otherwise returns (str range_high, str range_low)."""
+    snippet, offset = _getSourceSnippet(source)
+    return _getUnparsedWidthRange(snippet, offset)
+
+
+def _getUnparsedWidthRange(snippet, offset):
+    _range = None
+    if snippet is not None:
+        _rangeStr = _findRangeStr(snippet, offset)
+        split = _rangeStr.split(':')
+        if len(split) > 1:
+            _range = (split[0], split[1])
+    return _range
+
+
+def getUnparsedDepthRange(source):
+    """Get the depth of a memory (RAM) as an unparsed string (i.e. however it is
+    declared in source).
+    Returns ('0', '0') if a ';' is encountered before a depth spec, otherwise
+    returns (str start, str end)."""
+    snippet, offset = _getSourceSnippet(source)
+    return _getUnparsedDepthRange(snippet, offset)
+
+
+def _getUnparsedDepthRange(snippet, offset):
+    _depth = None
+    if snippet is not None:
+        _depthStr = _findDepthStr(snippet, offset)
+        split = _depthStr.split(':')
+        if len(split) > 1:
+            _depth = (split[0], split[1])
+    return _depth
+
+
+def _getSourceSnippet(yosrc, size=1024):
+    """Get a snippet (string) of source code surrounding a line defined
+    by the Yosys 'src' attribute 'yosrc' of a given net.
+    Returns (str snippet, int offset) where the net name begins 'offset'
+    characters into the string 'snippet'"""
+    groups = srcParse(yosrc)
+    if groups is None:
+        return False
+    filepath, linestart, charstart, lineend, charend = groups
+    snippet = None
+    offset = 0
+    try:
+        line = ""
+        with open(filepath, 'r') as fd:
+            for n in range(linestart):
+                line = fd.readline()
+            # Rewind up to 512 chars before start of register name
+            tell = fd.tell()
+            # Set tell to the start of the identifier
+            tell -= 1+len(line)-charstart
+            fd.seek(max(0, tell-512))
+            # Read up to 1024 chars
+            snippet = fd.read(1024)
+            offset = min(tell, 512)
+            #namestr = snippet[offset:offset+charend-charstart]
+            #print("_readRange: namestr = {}, offset = {}, len(snippet) = {}, rangeStr = {}".format(
+            #    namestr, offset, len(snippet), rangeStr))
+    except OSError:
+        print("Cannot open file {}".format(filepath))
+        return None, None
+    return snippet, offset
+
+
+def _findRangeStr(snippet, offset):
+    """Start at char offset. Read backwards. Look for ']' to open a range.
+    If we find either keyword 'reg' or 'wire' before the ']', we'll break and
+    decide the reg is 1-bit."""
+    grouplevel = 0
+    endix = None
+    rangestr = None
+    keywords = ('reg', 'wire', 'input', 'output', 'inout')
+    maxlen = max([len(kw) for kw in keywords])
+    for n in range(offset, -1, -1):
+        char = snippet[n]
+        # Room for whitespace+'r'+'e'+'g'+whitespace
+        slc = snippet[n:n+maxlen].replace('\n', ' ').replace('.', ' ')
+        if slc.strip() in keywords:
+            rangestr = "0:0"
+            break
+        elif char == ']': # walking backwards
+            if grouplevel == 0:
+                endix = n
+            grouplevel += 1
+        elif char == '[':
+            grouplevel -= 1
+            if grouplevel == 0:
+                rangestr = snippet[n+1:endix]
+                break
+    return rangestr
+
+
+def _findDepthStr(snippet, offset):
+    """Start at char offset. Read forward. Look for '[' to open a range.
+    If we find a semicolon '[', we'll break and decide the depth is 1.
+    """
+    grouplevel = 0
+    startix = None
+    depthstr = None
+    for n in range(offset, len(snippet)):
+        char = snippet[n]
+        if char == '[':
+            if grouplevel == 0:
+                startix = n
+            grouplevel += 1
+        elif char == ']':
+            grouplevel -= 1
+            if grouplevel == 0:
+                depthstr = snippet[startix+1:n]
+                break
+        elif char == ';':
+            break
+    return depthstr
+
 
 class VParser():
     # Helper values
@@ -12,58 +197,119 @@ class VParser():
     LINETYPE_PORT  = 0
     LINETYPE_MACRO = 1
 
-    def __init__(self, filename):
-        self._filename = filename
+    def __init__(self, filelist, top=None):
+        self._filelist = filelist
+        self._top = top
         self.valid = self.parse()
 
     def parse(self):
         self._dict = None
-        if not os.path.exists(self._filename):
-            print(f"File {self._filename} not found")
-            return False
-        ycmd = f'yosys -q -p "read_verilog {self._filename}" -p write_json'
-        try:
-            jsfile = subprocess.check_output(ycmd, shell=True).decode('latin-1')
-        except subprocess.CalledProcessError as e:
-            print(e)
-            return False
+        for filename in self._filelist:
+            if not os.path.exists(filename):
+                raise Exception(f"File {filename} not found")
+                return False
+        #ycmd = f'yosys -q -p "proc -noopt read_verilog {self._filename}" -p write_json'
+        #ycmd = f'yosys -q -p "read_verilog {self._filename}" -p write_json'
+        filestr = " ".join(self._filelist)
+        if self._top is not None:
+            topstr = f"\nhierarchy -top {self._top}"
+        else:
+            topstr = ""
+        ycmd = f'yosys -q -p "verilog_defines -DYOSYS\nread_verilog {filestr}{topstr}\nproc" -p write_json'
+        #try:
+        jsfile = subprocess.check_output(ycmd, shell=True).decode('latin-1')
+        #except subprocess.CalledProcessError as e:
         self._dict = json.loads(jsfile)
         # Separate attributes for this module
         mod = self._dict.get("modules", None)
+        self.params = {}
         if mod is not None:
             # Get first (should be only) module
             name,mdict = [x for x in mod.items()][0]
             self.modname = name
+            self.elaboratePorts()
             self.ports = mdict.get('ports', None)
+            paramdict = mdict.get("parameter_default_values", None)
+            if paramdict is not None:
+                dd = {}
+                for paramname, paramstr in paramdict.items():
+                    try:
+                        pval = int(paramstr, 2)
+                    except ValueError:
+                        # Handle the oddball value where the paramstr is literally '""'
+                        if len(paramstr.strip()) == 0:
+                            paramstr = '""'
+                        pval = paramstr
+                    dd[paramname] = pval
+                self.params[name] = dd
         else:
             self.modname = None
-            self.ports = []
+            self.ports = {}
         return True
 
-    def getPorts(self):
+    def elaboratePorts(self):
+        """Capture the unparsed range string for all ports of all modules"""
+        mod = self._dict.get("modules", None)
+        if mod is not None:
+            for name, mdict in mod.items():
+                ports = mdict.get("ports", None)
+                nets = mdict.get("netnames", None)
+                for portname in ports.keys():
+                    _range = None
+                    net_dict = nets[portname]
+                    if net_dict is not None:
+                        attr_dict = net_dict.get("attributes", None)
+                        if attr_dict is not None:
+                            src = attr_dict.get("src", None)
+                            if src is not None:
+                                _range = getUnparsedWidthRange(src)
+                    ports[portname]['range'] = _range
+        return
+
+    def getPorts(self, parsed=True):
         """Return list of (0, name, dirstr, rangeStart, rangeEnd), one for
         each port in the parsed module. The first '0' in the list is for compatibility
         with the non-Yosys parser which captures inline macros as well.  These need to
         be inserted at the proper location so they are included in the ports list (with
         non-zero as the first entry).  The Yosys parser acts on the preprocessed source
-        so all macros are already resolved."""
+        so all macros are already resolved.
+        If 'parsed', rangeStart and rangeEnd are integers (resolved expressions).
+        Otherwise, they are unparsed strings (directly copied from the source code)."""
         ports = []
         for portname,vdict in self.ports.items():
             portdir = vdict.get('direction', 'unknown')
             pbits = vdict.get('bits', [0])
-            pw = len(pbits)
-            if len(pbits) > 1:
-                rangeStart = len(pbits)-1
-                rangeEnd = 0
+            if parsed:
+                pw = len(pbits)
+                if len(pbits) > 1:
+                    rangeStart = len(pbits)-1
+                    rangeEnd = 0
+                else:
+                    rangeStart = None
+                    rangeEnd = None
             else:
-                rangeStart = None
-                rangeEnd = None
+                _range = vdict['range']
+                if _range is None:
+                    print(f"{portname} _range is None!")
+                    rangeStart = None
+                    rangeEnd = None
+                else:
+                    if _range[0] == '0' and _range[1] == '0':
+                        rangeStart, rangeEnd = (None, None)
+                    else:
+                        rangeStart, rangeEnd = _range[:2]
             ports.append((self.LINETYPE_PORT, portname, portdir, rangeStart, rangeEnd))
         return ports
 
-    def getParams(self):
-        """Yosys parser does not preserve parameters - seems to resolve them to literals."""
-        return None
+    def getParams(self, module=None):
+        """Returns {param_name: default_value, ...}"""
+        if len(self.params) == 0:
+            return {}
+        if module is None:
+            # Just get the first module
+            module = [key for key in self.params.keys()][0]
+        mdict = self.params[module]
+        return mdict
 
     def getDict(self):
         return self._dict
@@ -87,7 +333,7 @@ class VParser():
 
     def strToDepth(self, depth=0, partSelect = None):
         _d = self.selectPart(partSelect)
-        l = ["VParser({})".format(os.path.split(self._filename)[-1])]
+        l = ["VParser()"]
         l.extend(self._strToDepth(_d, depth, indent=2))
         return '\n'.join(l)
 
@@ -191,7 +437,6 @@ class VParser():
                                 bitlist[n][1] = hitlist
         self.walk(_do)
         return bitlist
-
 
     def search(self, target_key):
         """Search the dict structure for all keys that match 'target_key' and return as a nested dict."""
