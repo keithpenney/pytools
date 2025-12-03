@@ -5,6 +5,17 @@
 # integer ratio via a Stern-Brocot tree walk.
 # Configurable overhead bits for division allow for trading register depth
 # for accuracy
+#
+# This seems like a good place to make a note about running statistics
+#   Running Average:
+#     On each acquisition:
+#       nsamples++
+#       avg = avg*nsamples/(nsamples+1) + sample/(nsamples+1)       # Unlikely to overflow. Uses 2 dividers.
+#           = (nsamples*avg + sample)/(nsamples+1)                  # More likely to overflow. Uses 1 divider.
+#
+#   In many cases it would be computationally favorable to simply accumulate
+#   samples in a buffer that is MAX_SAMPLES*SAMPLE_MAX in size and let the
+#   host calculate sum/nsamples whenever the average is needed.
 
 # TODO:
 #   How do I properly limit the number of bits available?  Specifically, the

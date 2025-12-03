@@ -3,7 +3,6 @@
 # Handy string handling using SI-prefixes
 
 import re
-import repl
 
 _si = ((30, ("Q", "quetta")),
       (27, ("R", "ronna")),
@@ -29,6 +28,7 @@ _si = ((30, ("Q", "quetta")),
 
 _sichars = "".join([x[1][0] for x in _si])
 si_res = "^([\-0-9.]+)\s*([" + _sichars + "]?)"
+si_res_percent = "^([\-0-9.]+)\s*([" + _sichars + "%]?)"
 
 class SIFloat():
     def __init__(self, v):
@@ -201,10 +201,35 @@ def to_si(n, sigfigs=4, long=False, space=False):
 
 
 def from_si(s):
+    return from_si_with_units(s)[0]
+
+
+def from_si_with_units(s):
     """Interpret the number represented in string 's' using SI-prefixes"""
+    try:
+        n = float(s)
+        return n, ""
+    except ValueError:
+        pass
     _match = re.match(si_res, s.strip())
     if _match:
         num, pfx = _match.groups()
+        remainder = s[_match.span()[1]:]
+        exp = _get_exp(pfx)
+        if exp is None:
+            return None
+        return float(num)*(10**exp), remainder
+    return None, None
+
+
+def from_si_scale(s, scale=1):
+    """Interpret the number represented in string 's' using SI-prefixes
+    or optional percent of 'scale' with percentage '%' sign."""
+    _match = re.match(si_res_percent, s.strip())
+    if _match:
+        num, pfx = _match.groups()
+        if pfx == "%":
+            return float(num)*scale/100
         exp = _get_exp(pfx)
         if exp is None:
             return None
@@ -278,6 +303,7 @@ def preprocess(line):
     return line
 
 def sishell():
+    import repl
     intro = "SI Shell: Standard Python REPL which uses SI-prefixes for numeric literals"
     print(intro)
     repl.preprocess = preprocess
