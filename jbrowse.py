@@ -3,28 +3,15 @@
 import json
 import os
 
-def strDict(_dict, depth=-1):
-    def _strToDepth(_dict, depth=0, indent=0):
-        """RECURSIVE"""
-        if depth == 0:
-            return []
-        l = []
-        sindent = " "*indent
-        for key, val in _dict.items():
-            if hasattr(val, 'keys'):
-                l.append(f"{sindent}{key} : dict size {len(val)}")
-                l.extend(_strToDepth(val, depth-1, indent+2))
-            else:
-                l.append(f"{sindent}{key} : {val}")
-        return l
-    l = []
-    l.extend(_strToDepth(_dict, depth, indent=2))
-    return '\n'.join(l)
+def strStruct(struct, depth=-1):
+    sb = StructBrowser(struct)
+    return sb.strToDepth(depth=depth, partSelect=None)
 
 
-class DictBrowser():
+class StructBrowser():
+    _class_string_ = "StructBrowser"
     def __init__(self, d):
-        self._dict = d
+        self._struct = d
 
     def _strToDepth(self, item, depth=0, indent=0):
         """RECURSIVE"""
@@ -47,9 +34,12 @@ class DictBrowser():
                 l.append(f"{sindent}{key} : {val}")
         return l
 
+    def _get_class_string(self):
+        return "StructBrowser()"
+
     def strToDepth(self, depth=0, partSelect=None):
         _d = self.selectPart(partSelect)
-        l = ["DictBrowser()"]
+        l = [self._get_class_string()]
         l.extend(self._strToDepth(_d, depth, indent=2))
         return '\n'.join(l)
 
@@ -60,29 +50,33 @@ class DictBrowser():
         return self.__str__()
 
     def selectPart(self, partSelect = None):
-        _d = self._dict
+        _d = self._struct
         if partSelect is not None:
             parts = partSelect.split('.')
             for nselect in range(len(parts)):
                 select = parts[nselect]
+                matched = False
                 if hasattr(_d, "items"):
                     # It's a dict
-                    _iter = _d.items()
+                    try:
+                        _d = _d[select]
+                        matched = True
+                    except KeyError:
+                        pass
                 else:
                     # It's a list?
-                    _iter = enumerate(_d)
                     select = int(select)
-                matched = False
-                for key, val in _iter:
-                    if key == select:
-                        _d = val
+                    try:
+                        _d = _d[select]
                         matched = True
+                    except IndexError:
+                        pass
                 if not matched:
                     raise Exception(f"Failed to match part-select at: {select}")
         return _d
 
 
-class JSONParser(DictBrowser):
+class JSONBrowser(StructBrowser):
     def __init__(self, filename):
         self._filename = filename
         self.valid = self.load()
@@ -90,22 +84,12 @@ class JSONParser(DictBrowser):
     def load(self):
         with open(self._filename, 'r') as fd:
             struct = json.load(fd)
-        self._dict = struct
+        self._struct = struct
         return True
 
-    def strToDepth(self, depth=0, partSelect = None):
-        _d = self.selectPart(partSelect)
-        l = ["JSONParser({})".format(os.path.split(self._filename)[-1])]
-        l.extend(self._strToDepth(_d, depth, indent=2))
-        return '\n'.join(l)
+    def _get_class_string(self):
+        return "JSONBrowser({})".format(os.path.split(self._filename)[-1])
 
-    def __str__(self):
-        if self._dicts[0] == None:
-            return "JSONParser(Uninitialized)"
-        return self.strToDepth(3)
-
-    def __repr__(self):
-        return self.__str__()
 
 def doBrowse(argv):
     import argparse
@@ -117,11 +101,12 @@ def doBrowse(argv):
     filename = args.filename
     depth = int(args.depth)
     partSelect = args.select
-    jp = JSONParser(filename)
+    jp = JSONBrowser(filename)
     if not jp.valid:
         return False
     print(jp.strToDepth(depth, partSelect))
     return True
+
 
 if __name__ == "__main__":
     import sys
