@@ -65,11 +65,20 @@ class DictBrowser():
             parts = partSelect.split('.')
             for nselect in range(len(parts)):
                 select = parts[nselect]
-                for key, val in _d.items():
+                if hasattr(_d, "items"):
+                    # It's a dict
+                    _iter = _d.items()
+                else:
+                    # It's a list?
+                    _iter = enumerate(_d)
+                    select = int(select)
+                matched = False
+                for key, val in _iter:
                     if key == select:
                         _d = val
-        if not isinstance(_d, dict):
-            _d = self._dict
+                        matched = True
+                if not matched:
+                    raise Exception(f"Failed to match part-select at: {select}")
         return _d
 
 
@@ -103,8 +112,6 @@ def doBrowse(argv):
     parser = argparse.ArgumentParser(description="Browse a JSON file interactively")
     parser.add_argument('filename', default=-1, help="The JSON file to parse.")
     parser.add_argument('depth', default=-1, help="The depth of a nested dict to show (-1 = All).", nargs='?')
-    #parser.add_argument('-i', '--index', default=0, help="Index of top dict in case of list of dicts")
-    # FIXME - include integer indicies as part of part-select
     parser.add_argument('-s', '--select', default=None, help="A hierarchical dereference to select and use as the top when printing.")
     args = parser.parse_args()
     filename = args.filename
