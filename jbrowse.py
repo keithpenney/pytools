@@ -118,10 +118,14 @@ class StructBrowser():
                 else:
                     vstr = "[] or {}"
                 print(f"{trace} {key} : {vstr}")
+            trace.append(key)   # Add key
             if hasattr(val, 'items') or (hasattr(val, "__len__") and not hasattr(val, "lower")):
-                trace.append(key)   # Add key
                 yield from cls._walk(val, trace, do, depth=depth-1) # When this returns, we are done with this dict/list
-                trace.pop() # So we can pop the key from the trace and continue the loop
+            else:
+                rval = do(trace, val)
+                if rval:
+                    yield val
+            trace.pop() # So we can pop the key from the trace and continue the loop
         return True
 
 
