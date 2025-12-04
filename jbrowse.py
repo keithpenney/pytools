@@ -75,6 +75,45 @@ class StructBrowser():
                     raise Exception(f"Failed to match part-select at: {select}")
         return _d
 
+    def search(self, target_key):
+        """Search the dict structure for all keys that match 'target_key' and return as a nested dict."""
+        hitlist = []
+        def _do(trace, val):
+            if trace[-1] == target_key:
+                tstr = '.'.join(trace)
+                hitlist.append((tstr, val))
+        self.walk(_do)
+        return hitlist
+
+    def walk(self, do = lambda trace, val : None):
+        # I have to do this dumb thing where I actually
+        # walk the generator and discard everything or
+        # else the function exits early and doesn't walk?
+        _iter = self._walk(self._struct, [], do)
+        for x in _iter:
+            pass
+        return True
+
+    def iter_walk(self, do = lambda trace, val : False):
+        return self._walk(self._struct, [], do)
+
+    @classmethod
+    def _walk(cls, td, trace = [], do = lambda trace, val : False):
+        """RECURSIVE"""
+        if hasattr(td, "items"):
+            _iter = td.items()
+        else:
+            _iter = enumerate(td)
+        for key, val in _iter:
+            trace.append(key)   # Add key
+            rval = do(trace, val)
+            if rval:
+                yield val
+            if hasattr(val, 'items') or (hasattr(val, "__len__") and not hasattr(val, "lower")):
+                yield from cls._walk(val, trace, do) # When this returns, we are done with this dict/list
+            trace.pop() # So we can pop the key from the trace and continue the loop
+        return True
+
 
 class JSONBrowser(StructBrowser):
     def __init__(self, filename):
