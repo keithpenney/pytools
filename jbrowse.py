@@ -3,6 +3,8 @@
 import json
 import os
 
+DEBUG_WALK = False
+
 def strStruct(struct, depth=-1):
     sb = StructBrowser(struct)
     return sb.strToDepth(depth=depth, partSelect=None)
@@ -85,33 +87,41 @@ class StructBrowser():
         self.walk(_do)
         return hitlist
 
-    def walk(self, do = lambda trace, val : None):
+    def walk(self, do = lambda trace, val : None, depth=-1):
         # I have to do this dumb thing where I actually
         # walk the generator and discard everything or
         # else the function exits early and doesn't walk?
-        _iter = self._walk(self._struct, [], do)
+        _iter = self._walk(self._struct, [], do, depth=depth)
         for x in _iter:
             pass
         return True
 
-    def iter_walk(self, do = lambda trace, val : False):
-        return self._walk(self._struct, [], do)
+    def iter_walk(self, do = lambda trace, val : False, depth=-1):
+        return self._walk(self._struct, [], do, depth=depth)
 
     @classmethod
-    def _walk(cls, td, trace = [], do = lambda trace, val : False):
-        """RECURSIVE"""
+    def _walk(cls, td, trace = [], do = lambda trace, val : False, depth=-1):
+        """Depth-first recursive walk"""
+        if depth == 0:
+            return True
+        rval = do(trace, td)
+        if rval:
+            yield td
         if hasattr(td, "items"):
             _iter = td.items()
         else:
             _iter = enumerate(td)
         for key, val in _iter:
-            trace.append(key)   # Add key
-            rval = do(trace, val)
-            if rval:
-                yield val
+            if DEBUG_WALK:
+                if hasattr(val, "lower") or hasattr(val, "imag"):
+                    vstr = str(val)
+                else:
+                    vstr = "[] or {}"
+                print(f"{trace} {key} : {vstr}")
             if hasattr(val, 'items') or (hasattr(val, "__len__") and not hasattr(val, "lower")):
-                yield from cls._walk(val, trace, do) # When this returns, we are done with this dict/list
-            trace.pop() # So we can pop the key from the trace and continue the loop
+                trace.append(key)   # Add key
+                yield from cls._walk(val, trace, do, depth=depth-1) # When this returns, we are done with this dict/list
+                trace.pop() # So we can pop the key from the trace and continue the loop
         return True
 
 
