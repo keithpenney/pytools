@@ -1,5 +1,6 @@
 #! Browse a (potentially very big) JSON file
 
+import re
 import json
 import os
 
@@ -81,9 +82,16 @@ class StructBrowser():
         """Search the dict structure for all keys that match 'target_key' and return as a nested dict."""
         hitlist = []
         def _do(trace, val):
-            if trace[-1] == target_key:
-                tstr = '.'.join(trace)
-                hitlist.append((tstr, val))
+            if len(trace) > 0:
+                key = trace[-1]
+                if hasattr(key, "lower"):
+                    if re.search(target_key, key):
+                        tstr = '.'.join([str(x) for x in trace[:-1]])
+                        hitlist.append((tstr, key))
+                if hasattr(val, "lower"):
+                    if re.search(target_key, val):
+                        tstr = '.'.join([str(x) for x in trace])
+                        hitlist.append((tstr, val))
         self.walk(_do)
         return hitlist
 
@@ -144,21 +152,47 @@ class JSONBrowser(StructBrowser):
         return "JSONBrowser({})".format(os.path.split(self._filename)[-1])
 
 
-def doBrowse(argv):
-    import argparse
-    parser = argparse.ArgumentParser(description="Browse a JSON file interactively")
-    parser.add_argument('filename', default=-1, help="The JSON file to parse.")
-    parser.add_argument('depth', default=-1, help="The depth of a nested dict to show (-1 = All).", nargs='?')
-    parser.add_argument('-s', '--select', default=None, help="A hierarchical dereference to select and use as the top when printing.")
-    args = parser.parse_args()
+def handleBrowse(args):
     filename = args.filename
     depth = int(args.depth)
     partSelect = args.select
-    jp = JSONBrowser(filename)
-    if not jp.valid:
+    jb = JSONBrowser(filename)
+    if not jb.valid:
         return False
-    print(jp.strToDepth(depth, partSelect))
+    print(jb.strToDepth(depth, partSelect))
     return True
+
+
+def handleSearch(args):
+    filename = args.filename
+    jb = JSONBrowser(filename)
+    hitlist = jb.search(args.regex)
+    for trace, val in hitlist:
+        if hasattr(val, 'items'):
+            vstr = f"dict len {len(val)}"
+        elif (hasattr(val, "__len__") and not hasattr(val, "lower")):
+            vstr = f"list len {len(val)}"
+        else:
+            vstr = str(val)
+        print(f"{trace} : {vstr}")
+    return
+
+
+def doBrowse(argv):
+    import argparse
+    parser = argparse.ArgumentParser(description="Browse a JSON file interactively")
+    parser.add_argument("filename", default=-1, help="The JSON file to parse.")
+    parser.set_defaults(handler=lambda args: None)
+    subparsers = parser.add_subparsers(help="Subcommands")
+    sub_browse = subparsers.add_parser("browse", aliases=('b'))
+    sub_browse.add_argument("depth", default=-1, help="The depth of a nested dict to show (-1 = All).", nargs='?')
+    sub_browse.add_argument("-s", "--select", default=None, help="A hierarchical dereference to select and use as the top when printing.")
+    sub_browse.set_defaults(handler=handleBrowse)
+    sub_search = subparsers.add_parser("search", aliases=('s'))
+    sub_search.add_argument("regex", help="Regex compared against everything hit during the walk")
+    sub_search.set_defaults(handler=handleSearch)
+    args = parser.parse_args()
+    return args.handler(args)
 
 
 if __name__ == "__main__":
